@@ -185,6 +185,9 @@ bwcVersions.forPreviousUnreleased { VersionCollection.UnreleasedVersionInfo unre
         } else if (showStacktraceName.equals("ALWAYS_FULL")) {
             args "--full-stacktrace"
         }
+        if (project.hasProperty('build.additional_maven_repo.mirror')) {
+            args "-Pbuild.additional_maven_repo.mirror=" + project.getProperty('build.additional_maven_repo.mirror')
+        }
         standardOutput = new IndentingOutputStream(System.out, bwcVersion)
         errorOutput = new IndentingOutputStream(System.err, bwcVersion)
         doLast {

@@ -436,6 +436,7 @@ class BuildPlugin implements Plugin<Project> {
     /** Adds repositories used by ES dependencies */
     static void configureRepositories(Project project) {
         RepositoryHandler repos = project.repositories
+        project.apply(from: "${project.rootProject.projectDir}/gradle/maybeConfigureExternalRepo.gradle")
         if (System.getProperty("repos.mavenLocal") != null) {
             // with -Drepos.mavenLocal=true we can force checking the local .m2 repo which is
             // useful for development ie. bwc tests where we install stuff in the local repository

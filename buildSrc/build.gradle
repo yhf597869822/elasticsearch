@@ -35,6 +35,9 @@ if (project == rootProject) {
   // change the build dir used during build init, so that doing a clean
   // won't wipe out the buildscript jar
   buildDir = 'build-bootstrap'
+  // Apply common external repo configuration to allow for mirrors to be set up.
+  project.apply(from: "${project.rootProject.projectDir}/../gradle/maybeConfigureExternalRepo.gradle")
+  project.apply(from: "${project.rootProject.projectDir}/../gradle/maybeConfigureExternalRepo.gradle", to: project.buildscript)
 }
 
 /*****************************************************************************

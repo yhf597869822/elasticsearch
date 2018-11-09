@@ -1,0 +1,17 @@
+if (hasProperty('build.additional_maven_repo.mirror')) {
+    buildscript {
+        repositories {
+            maven {
+                url "${getProperty('build.additional_maven_repo.mirror')}/mavenCentral"
+                name "external"
+            }
+        }
+    }
+    repositories {
+        maven {
+            url "${getProperty('build.additional_maven_repo.mirror')}/mavenCentral"
+            name "external"
+        }
+    }
+
+}

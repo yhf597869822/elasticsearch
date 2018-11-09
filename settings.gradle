@@ -1,7 +1,25 @@
-import org.elasticsearch.gradle.Version
+// Configure external repository for  plugin portal, applying maybeConfigureExternalRepo.gradle doesn't work here
+pluginManagement {
+  // Gradle 4.10: hasProperty returns false despite the property being present
+  try {
+    String additionalRepoUrl = getProperty('build.additional_maven_repo.mirror')
+    logger.lifecycle("Configuring external maven repo: {}", additionalRepoUrl)
+    repositories {
+      maven {
+        url "${additionalRepoUrl}/plugins/"
+        name "external"
+      }
+      gradlePluginPortal()
+    }
+  }
+  catch (MissingPropertyException e) {
+    // default config when no property set
+  }
+}
 
 String dirName = rootProject.projectDir.name
 rootProject.name = dirName
+
 
 List projects = [
   'build-tools',
