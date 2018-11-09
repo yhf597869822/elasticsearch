@@ -1,0 +1,28 @@
+/*settingsEvaluated { settings ->
+    settings.pluginManagement {
+        repositories {
+            maven {
+                url "http://35.239.68.253/plugins"
+            }
+            gradlePluginPortal()
+        }
+    }
+}*/
+// NOTE: This file needs to be linked to ~/.gradle/init.d for it to also have effect
+// on `buildSrc`  
+allprojects {
+    buildscript {
+        repositories {
+            jcenter()
+            /*maven {
+                url "http://35.239.68.253/"
+            }*/
+        }
+    }
+    repositories {
+        jcenter()
+        /*maven {
+            url "http://35.239.68.253/"
+        }*/
+    }
+}
