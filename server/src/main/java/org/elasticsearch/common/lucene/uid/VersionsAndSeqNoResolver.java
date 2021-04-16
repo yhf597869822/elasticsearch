@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.common.lucene.uid;
@@ -30,8 +19,6 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentMap;
-
-import static org.elasticsearch.common.lucene.uid.Versions.NOT_FOUND;
 
 /** Utility class to resolve the Lucene doc ID, version, seqNo and primaryTerms for a given uid. */
 public final class VersionsAndSeqNoResolver {
@@ -96,12 +83,16 @@ public final class VersionsAndSeqNoResolver {
     public static class DocIdAndVersion {
         public final int docId;
         public final long version;
+        public final long seqNo;
+        public final long primaryTerm;
         public final LeafReader reader;
         public final int docBase;
 
-        public DocIdAndVersion(int docId, long version, LeafReader reader, int docBase) {
+        public DocIdAndVersion(int docId, long version, long seqNo, long primaryTerm, LeafReader reader, int docBase) {
             this.docId = docId;
             this.version = version;
+            this.seqNo = seqNo;
+            this.primaryTerm = primaryTerm;
             this.reader = reader;
             this.docBase = docBase;
         }
@@ -112,13 +103,11 @@ public final class VersionsAndSeqNoResolver {
         public final int docId;
         public final long seqNo;
         public final LeafReaderContext context;
-        public final boolean isLive;
 
-        DocIdAndSeqNo(int docId, long seqNo, LeafReaderContext context, boolean isLive) {
+        DocIdAndSeqNo(int docId, long seqNo, LeafReaderContext context) {
             this.docId = docId;
             this.seqNo = seqNo;
             this.context = context;
-            this.isLive = isLive;
         }
     }
 
@@ -129,7 +118,7 @@ public final class VersionsAndSeqNoResolver {
      * <li>a doc ID and a version otherwise
      * </ul>
      */
-    public static DocIdAndVersion loadDocIdAndVersion(IndexReader reader, Term term) throws IOException {
+    public static DocIdAndVersion loadDocIdAndVersion(IndexReader reader, Term term, boolean loadSeqNo) throws IOException {
         PerThreadIDVersionAndSeqNoLookup[] lookups = getLookupState(reader, term.field());
         List<LeafReaderContext> leaves = reader.leaves();
         // iterate backwards to optimize for the frequently updated documents
@@ -137,7 +126,7 @@ public final class VersionsAndSeqNoResolver {
         for (int i = leaves.size() - 1; i >= 0; i--) {
             final LeafReaderContext leaf = leaves.get(i);
             PerThreadIDVersionAndSeqNoLookup lookup = lookups[leaf.ord];
-            DocIdAndVersion result = lookup.lookupVersion(term.bytes(), leaf);
+            DocIdAndVersion result = lookup.lookupVersion(term.bytes(), loadSeqNo, leaf);
             if (result != null) {
                 return result;
             }
@@ -147,43 +136,21 @@ public final class VersionsAndSeqNoResolver {
 
     /**
      * Loads the internal docId and sequence number of the latest copy for a given uid from the provided reader.
-     * The flag {@link DocIdAndSeqNo#isLive} indicates whether the returned document is live or (soft)deleted.
-     * This returns {@code null} if no such document matching the given term uid.
+     * The result is either null or the live and latest version of the given uid.
      */
     public static DocIdAndSeqNo loadDocIdAndSeqNo(IndexReader reader, Term term) throws IOException {
         final PerThreadIDVersionAndSeqNoLookup[] lookups = getLookupState(reader, term.field());
         final List<LeafReaderContext> leaves = reader.leaves();
-        DocIdAndSeqNo latest = null;
         // iterate backwards to optimize for the frequently updated documents
         // which are likely to be in the last segments
         for (int i = leaves.size() - 1; i >= 0; i--) {
             final LeafReaderContext leaf = leaves.get(i);
             final PerThreadIDVersionAndSeqNoLookup lookup = lookups[leaf.ord];
             final DocIdAndSeqNo result = lookup.lookupSeqNo(term.bytes(), leaf);
-            if (result == null) {
-                continue;
-            }
-            if (result.isLive) {
-                // The live document must always be the latest copy, thus we can early terminate here.
-                assert latest == null || latest.seqNo <= result.seqNo :
-                    "the live doc does not have the highest seq_no; live_seq_no=" + result.seqNo + " < deleted_seq_no=" + latest.seqNo;
+            if (result != null) {
                 return result;
             }
-            if (latest == null || latest.seqNo < result.seqNo) {
-                latest = result;
-            }
         }
-        return latest;
-    }
-
-    /**
-     * Load the version for the uid from the reader, returning<ul>
-     * <li>{@link Versions#NOT_FOUND} if no matching doc exists,
-     * <li>the version associated with the provided uid otherwise
-     * </ul>
-     */
-    public static long loadVersion(IndexReader reader, Term term) throws IOException {
-        final DocIdAndVersion docIdAndVersion = loadDocIdAndVersion(reader, term);
-        return docIdAndVersion == null ? NOT_FOUND : docIdAndVersion.version;
+        return null;
     }
 }

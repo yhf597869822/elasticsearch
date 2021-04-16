@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.client;
@@ -24,10 +13,10 @@ import org.apache.http.HttpHost;
 import org.apache.http.ProtocolVersion;
 import org.apache.http.RequestLine;
 import org.apache.http.client.methods.HttpGet;
-import org.apache.http.entity.ByteArrayEntity;
 import org.apache.http.entity.ContentType;
 import org.apache.http.message.BasicRequestLine;
 import org.apache.http.message.BasicStatusLine;
+import org.apache.http.nio.entity.NByteArrayEntity;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.Build;
 import org.elasticsearch.Version;
@@ -122,12 +111,16 @@ public class CustomRestHighLevelClientTests extends ESTestCase {
      */
     @SuppressForbidden(reason = "We're forced to uses Class#getDeclaredMethods() here because this test checks protected methods")
     public void testMethodsVisibility() {
-        final String[] methodNames = new String[]{"parseEntity",
+        final String[] methodNames = new String[]{"convertExistsResponse",
+                                                  "parseEntity",
                                                   "parseResponseException",
                                                   "performRequest",
                                                   "performRequestAndParseEntity",
+                                                  "performRequestAndParseOptionalEntity",
                                                   "performRequestAsync",
-                                                  "performRequestAsyncAndParseEntity"};
+                                                  "performRequestAsyncAndParseEntity",
+                                                  "performRequestAsyncAndParseOptionalEntity"
+                                                  };
 
         final Set<String> protectedMethods =  Arrays.stream(RestHighLevelClient.class.getDeclaredMethods())
                                                      .filter(method -> Modifier.isProtected(method.getModifiers()))
@@ -163,7 +156,7 @@ public class CustomRestHighLevelClientTests extends ESTestCase {
 
         MainResponse response = new MainResponse(httpHeader.getValue(), Version.CURRENT, ClusterName.DEFAULT, "_na", Build.CURRENT);
         BytesRef bytesRef = XContentHelper.toXContent(response, XContentType.JSON, false).toBytesRef();
-        when(mockResponse.getEntity()).thenReturn(new ByteArrayEntity(bytesRef.bytes, ContentType.APPLICATION_JSON));
+        when(mockResponse.getEntity()).thenReturn(new NByteArrayEntity(bytesRef.bytes, ContentType.APPLICATION_JSON));
 
         RequestLine requestLine = new BasicRequestLine(HttpGet.METHOD_NAME, ENDPOINT, protocol);
         when(mockResponse.getRequestLine()).thenReturn(requestLine);

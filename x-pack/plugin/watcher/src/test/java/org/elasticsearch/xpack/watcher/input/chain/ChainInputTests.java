@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.watcher.input.chain;
 
@@ -147,7 +148,7 @@ public class ChainInputTests extends ESTestCase {
         watchBuilder()
                 .trigger(schedule(interval("5s")))
                 .input(chainedInputBuilder)
-                .condition(new ScriptCondition(mockScript("ctx.payload.hits.total == 1")))
+                .condition(new ScriptCondition(mockScript("ctx.payload.hits.total.value == 1")))
                 .addAction("_id", loggingAction("watch [{{ctx.watch_id}}] matched"))
                 .toXContent(builder, ToXContent.EMPTY_PARAMS);
 

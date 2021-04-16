@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.sql.client;
 
@@ -19,6 +20,7 @@ import org.elasticsearch.xpack.sql.proto.AbstractSqlRequest;
 import org.elasticsearch.xpack.sql.proto.MainResponse;
 import org.elasticsearch.xpack.sql.proto.Mode;
 import org.elasticsearch.xpack.sql.proto.Protocol;
+import org.elasticsearch.xpack.sql.proto.RequestInfo;
 import org.elasticsearch.xpack.sql.proto.SqlClearCursorRequest;
 import org.elasticsearch.xpack.sql.proto.SqlClearCursorResponse;
 import org.elasticsearch.xpack.sql.proto.SqlQueryRequest;
@@ -31,9 +33,10 @@ import java.io.InputStream;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
 import java.sql.SQLException;
-import java.util.Collections;
-import java.util.TimeZone;
 import java.util.function.Function;
+
+import static java.util.Collections.emptyList;
+import static java.util.Collections.emptyMap;
 
 /**
  * A specialized high-level REST client with support for SQL-related functions.
@@ -42,12 +45,12 @@ import java.util.function.Function;
  */
 public class HttpClient {
 
-    private static final XContentType REQUEST_BODY_CONTENT_TYPE = XContentType.JSON;
-
     private final ConnectionConfiguration cfg;
+    private final XContentType requestBodyContentType;
 
     public HttpClient(ConnectionConfiguration cfg) {
         this.cfg = cfg;
+        this.requestBodyContentType = cfg.binaryCommunication() ? XContentType.CBOR : XContentType.JSON;
     }
 
     private NamedXContentRegistry registry = NamedXContentRegistry.EMPTY;
@@ -60,11 +63,21 @@ public class HttpClient {
         return get("/", MainResponse::fromXContent);
     }
 
-    public SqlQueryResponse queryInit(String query, int fetchSize) throws SQLException {
+    public SqlQueryResponse basicQuery(String query, int fetchSize) throws SQLException {
         // TODO allow customizing the time zone - this is what session set/reset/get should be about
-        SqlQueryRequest sqlRequest = new SqlQueryRequest(Mode.PLAIN, query, Collections.emptyList(), null,
-            TimeZone.getTimeZone("UTC"), fetchSize, TimeValue.timeValueMillis(cfg.queryTimeout()),
-            TimeValue.timeValueMillis(cfg.pageTimeout()));
+        // method called only from CLI
+        SqlQueryRequest sqlRequest = new SqlQueryRequest(query, emptyList(), Protocol.TIME_ZONE,
+                fetchSize,
+                TimeValue.timeValueMillis(cfg.queryTimeout()),
+                TimeValue.timeValueMillis(cfg.pageTimeout()),
+                null,
+                Boolean.FALSE,
+                null,
+                new RequestInfo(Mode.CLI, ClientVersion.CURRENT),
+                false,
+                false,
+                cfg.binaryCommunication(),
+                emptyMap());
         return query(sqlRequest);
     }
 
@@ -73,14 +86,15 @@ public class HttpClient {
     }
 
     public SqlQueryResponse nextPage(String cursor) throws SQLException {
-        SqlQueryRequest sqlRequest = new SqlQueryRequest(Mode.PLAIN, cursor, TimeValue.timeValueMillis(cfg.queryTimeout()),
-            TimeValue.timeValueMillis(cfg.pageTimeout()));
+        // method called only from CLI
+        SqlQueryRequest sqlRequest = new SqlQueryRequest(cursor, TimeValue.timeValueMillis(cfg.queryTimeout()),
+                TimeValue.timeValueMillis(cfg.pageTimeout()), new RequestInfo(Mode.CLI), cfg.binaryCommunication());
         return post(Protocol.SQL_QUERY_REST_ENDPOINT, sqlRequest, SqlQueryResponse::fromXContent);
     }
 
-    public boolean queryClose(String cursor) throws SQLException {
+    public boolean queryClose(String cursor, Mode mode) throws SQLException {
         SqlClearCursorResponse response = post(Protocol.CLEAR_CURSOR_REST_ENDPOINT,
-            new SqlClearCursorRequest(Mode.PLAIN, cursor),
+            new SqlClearCursorRequest(cursor, new RequestInfo(mode)),
             SqlClearCursorResponse::fromXContent);
         return response.isSucceeded();
     }
@@ -89,22 +103,23 @@ public class HttpClient {
             CheckedFunction<XContentParser, Response, IOException> responseParser)
             throws SQLException {
         byte[] requestBytes = toXContent(request);
-        String query = "error_trace&mode=" + request.mode();
+        String query = "error_trace";
         Tuple<XContentType, byte[]> response =
             AccessController.doPrivileged((PrivilegedAction<ResponseOrException<Tuple<XContentType, byte[]>>>) () ->
                 JreHttpUrlConnection.http(path, query, cfg, con ->
                     con.request(
                         (out) -> out.write(requestBytes),
                         this::readFrom,
-                        "POST"
+                        "POST",
+                        requestBodyContentType.mediaTypeWithoutParameters() // "application/cbor" or "application/json"
                     )
                 )).getResponseOrThrowException();
         return fromXContent(response.v1(), response.v2(), responseParser);
     }
 
     private boolean head(String path, long timeoutInMs) throws SQLException {
-        ConnectionConfiguration pingCfg = new ConnectionConfiguration(cfg.baseUri(), cfg.connectionString(),
-            cfg.connectTimeout(), timeoutInMs, cfg.queryTimeout(), cfg.pageTimeout(), cfg.pageSize(),
+        ConnectionConfiguration pingCfg = new ConnectionConfiguration(cfg.baseUri(), cfg.connectionString(), cfg.validateProperties(),
+            cfg.binaryCommunication(), cfg.connectTimeout(), timeoutInMs, cfg.queryTimeout(), cfg.pageTimeout(), cfg.pageSize(),
             cfg.authUser(), cfg.authPass(), cfg.sslConfig(), cfg.proxyConfig());
         try {
             return AccessController.doPrivileged((PrivilegedAction<Boolean>) () ->
@@ -128,9 +143,9 @@ public class HttpClient {
         return fromXContent(response.v1(), response.v2(), responseParser);
     }
 
-    private static <Request extends ToXContent> byte[] toXContent(Request xContent) {
+    private <Request extends ToXContent> byte[] toXContent(Request xContent) {
         try(ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
-            try (XContentBuilder xContentBuilder = new XContentBuilder(REQUEST_BODY_CONTENT_TYPE.xContent(), buffer)) {
+            try (XContentBuilder xContentBuilder = new XContentBuilder(requestBodyContentType.xContent(), buffer)) {
                 if (xContent.isFragment()) {
                     xContentBuilder.startObject();
                 }
@@ -147,7 +162,7 @@ public class HttpClient {
 
     private Tuple<XContentType, byte[]> readFrom(InputStream inputStream, Function<String, String> headers) {
         String contentType = headers.apply("Content-Type");
-        XContentType xContentType = XContentType.fromMediaTypeOrFormat(contentType);
+        XContentType xContentType = XContentType.fromMediaType(contentType);
         if (xContentType == null) {
             throw new IllegalStateException("Unsupported Content-Type: " + contentType);
         }

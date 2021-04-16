@@ -1,86 +1,63 @@
 [role="xpack"]
 [testenv="basic"]
 [[rollup-start-job]]
-=== Start Job API
+=== Start {rollup-jobs} API
+[subs="attributes"]
 ++++
-<titleabbrev>Start Job</titleabbrev>
+<titleabbrev>Start {rollup-jobs}</titleabbrev>
 ++++
+
+Starts an existing, stopped {rollup-job}.
 
 experimental[]
 
-This API starts an existing, stopped rollup job.  If the job does not exist an exception will be thrown.
-Starting an already started job has no action.
+[[rollup-start-job-request]]
+==== {api-request-title}
 
-==== Request
+`POST _rollup/job/<job_id>/_start`
 
-`POST _xpack/rollup/job/<job_id>/_start`
+[[rollup-start-job-prereqs]]
+==== {api-prereq-title}
 
-//===== Description
+* If the {es} {security-features} are enabled, you must have `manage` or
+`manage_rollup` cluster privileges to use this API. For more information, see
+<<security-privileges>>.
 
-==== Path Parameters
+[[rollup-start-job-desc]]
+==== {api-description-title}
 
-`job_id` (required)::
-  (string) Identifier for the job
+If you try to start a job that does not exist, an exception occurs. If you try
+to start a job that is already started, nothing happens.
 
+[[rollup-start-job-path-params]]
+==== {api-path-parms-title}
 
-==== Request Body
+`<job_id>`::
+  (Required, string) Identifier for the {rollup-job}.
+  
+[[rollup-start-job-response-codes]]
+==== {api-response-codes-title}
 
-There is no request body for the Start Job API.
+ `404` (Missing resources)::
+ This code indicates that there are no resources that match the request. It
+ occurs if you try to start a job that doesn't exist.
 
-==== Authorization
+[[rollup-start-job-examples]]
+==== {api-examples-title}
 
-You must have `manage` or `manage_rollup` cluster privileges to use this API.
-For more information, see
-{xpack-ref}/security-privileges.html[Security Privileges].
+If we have already created a {rollup-job} named `sensor`, it can be started with:
 
-==== Examples
-
-If we have already created a rollup job named `sensor`, it can be started with:
-
-[source,js]
+[source,console]
 --------------------------------------------------
-POST _xpack/rollup/job/sensor/_start
+POST _rollup/job/sensor/_start
 --------------------------------------------------
-// CONSOLE
 // TEST[setup:sensor_rollup_job]
 
 Which will return the response:
 
-[source,js]
+[source,console-result]
 ----
 {
   "started": true
 }
 ----
-// TESTRESPONSE
-
-If however we try to start a job which doesn't exist:
-
-[source,js]
---------------------------------------------------
-POST _xpack/rollup/job/does_not_exist/_start
---------------------------------------------------
-// CONSOLE
-// TEST[catch:missing]
-
-A 404 `resource_not_found` exception will be thrown:
-
-[source,js]
-----
-{
-    "error" : {
-        "root_cause" : [
-            {
-                "type" : "resource_not_found_exception",
-                "reason" : "Task for Rollup Job [does_not_exist] not found",
-                "stack_trace": ...
-            }
-        ],
-        "type" : "resource_not_found_exception",
-        "reason" : "Task for Rollup Job [does_not_exist] not found",
-        "stack_trace": ...
-    },
-    "status": 404
-}
-----
-// TESTRESPONSE[s/"stack_trace": \.\.\./"stack_trace": $body.$_path/]

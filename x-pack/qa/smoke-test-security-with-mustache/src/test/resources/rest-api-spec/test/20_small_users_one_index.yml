@@ -1,7 +1,7 @@
 ---
 setup:
   - skip:
-      features: headers
+      features: ["headers", "allowed_warnings"]
 
   - do:
       indices.create:
@@ -24,7 +24,7 @@ setup:
             ]
           }
   - do:
-      xpack.security.put_user:
+      security.put_user:
         username: "joe"
         body:  >
             {
@@ -35,7 +35,7 @@ setup:
               }
             }
   - do:
-      xpack.security.put_user:
+      security.put_user:
         username: "john"
         body:  >
             {
@@ -49,22 +49,22 @@ setup:
 ---
 teardown:
   - do:
-      xpack.security.delete_user:
+      security.delete_user:
         username: "joe"
         ignore: 404
   - do:
-      xpack.security.delete_user:
+      security.delete_user:
         username: "john"
         ignore: 404
   - do:
-      xpack.security.delete_role:
+      security.delete_role:
         name: "small_companies_role"
         ignore: 404
 
 ---
 "Test shared index separating user by using DLS role query with user's username":
   - do:
-      xpack.security.put_role:
+      security.put_role:
         name: "small_companies_role"
         body:  >
             {
@@ -84,11 +84,12 @@ teardown:
             }
 
   - do:
+      allowed_warnings:
+        - "the index privilege [create] allowed the update mapping action [indices:admin/mapping/auto_put] on index [shared_logs], this privilege will not permit mapping updates in the next major release - users who require access to update mappings must be granted explicit privileges"
       headers:
         Authorization: "Basic am9lOngtcGFjay10ZXN0LXBhc3N3b3Jk"
       index:
         index: shared_logs
-        type: type
         pipeline: "my_pipeline"
         body:  >
           {
@@ -99,7 +100,6 @@ teardown:
         Authorization: "Basic am9objp4LXBhY2stdGVzdC1wYXNzd29yZA=="
       index:
         index: shared_logs
-        type: type
         pipeline: "my_pipeline"
         body:  >
           {
@@ -107,13 +107,15 @@ teardown:
           }
 
   - do:
-      indices.refresh: {}
+      indices.refresh:
+        index: shared_logs
 
   # Joe searches:
   - do:
       headers:
         Authorization: "Basic am9lOngtcGFjay10ZXN0LXBhc3N3b3Jk"
       search:
+        rest_total_hits_as_int: true
         index: shared_logs
         body: { "query" : { "match_all" : {} } }
   - match: { hits.total: 1}
@@ -124,6 +126,7 @@ teardown:
       headers:
         Authorization: "Basic am9objp4LXBhY2stdGVzdC1wYXNzd29yZA=="
       search:
+        rest_total_hits_as_int: true
         index: shared_logs
         body: { "query" : { "match_all" : {} } }
   - match: { hits.total: 1}
@@ -132,7 +135,7 @@ teardown:
 ---
 "Test shared index separating user by using DLS role query with user's metadata":
   - do:
-      xpack.security.put_role:
+      security.put_role:
         name: "small_companies_role"
         body:  >
             {
@@ -152,11 +155,12 @@ teardown:
             }
 
   - do:
+      allowed_warnings:
+        - "the index privilege [create] allowed the update mapping action [indices:admin/mapping/auto_put] on index [shared_logs], this privilege will not permit mapping updates in the next major release - users who require access to update mappings must be granted explicit privileges"
       headers:
         Authorization: "Basic am9lOngtcGFjay10ZXN0LXBhc3N3b3Jk"
       index:
         index: shared_logs
-        type: type
         pipeline: "my_pipeline"
         body:  >
           {
@@ -167,7 +171,6 @@ teardown:
         Authorization: "Basic am9objp4LXBhY2stdGVzdC1wYXNzd29yZA=="
       index:
         index: shared_logs
-        type: type
         pipeline: "my_pipeline"
         body:  >
           {
@@ -175,13 +178,15 @@ teardown:
           }
 
   - do:
-      indices.refresh: {}
+      indices.refresh:
+        index: shared_logs
 
   # Joe searches:
   - do:
       headers:
         Authorization: "Basic am9lOngtcGFjay10ZXN0LXBhc3N3b3Jk"
       search:
+        rest_total_hits_as_int: true
         index: shared_logs
         body: { "query" : { "match_all" : {} } }
   - match: { hits.total: 1}
@@ -192,6 +197,7 @@ teardown:
       headers:
         Authorization: "Basic am9objp4LXBhY2stdGVzdC1wYXNzd29yZA=="
       search:
+        rest_total_hits_as_int: true
         index: shared_logs
         body: { "query" : { "match_all" : {} } }
   - match: { hits.total: 1}

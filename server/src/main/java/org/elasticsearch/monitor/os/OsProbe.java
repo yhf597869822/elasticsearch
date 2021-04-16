@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.monitor.os;
@@ -33,12 +22,34 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+/**
+ * The {@link OsProbe} class retrieves information about the physical and swap size of the machine
+ * memory, as well as the system load average and cpu load.
+ *
+ * In some exceptional cases, it's possible the underlying native methods used by
+ * {@link #getFreePhysicalMemorySize()}, {@link #getTotalPhysicalMemorySize()},
+ * {@link #getFreeSwapSpaceSize()}, and {@link #getTotalSwapSpaceSize()} can return a
+ * negative value. Because of this, we prevent those methods from returning negative values,
+ * returning 0 instead.
+ *
+ * The OS can report a negative number in a number of cases:
+ * - Non-supported OSes (HP-UX, or AIX)
+ * - A failure of macOS to initialize host statistics
+ * - An OS that does not support the {@code _SC_PHYS_PAGES} or {@code _SC_PAGE_SIZE} flags for the {@code sysconf()} linux kernel call
+ * - An overflow of the product of {@code _SC_PHYS_PAGES} and {@code _SC_PAGE_SIZE}
+ * - An error case retrieving these values from a linux kernel
+ * - A non-standard libc implementation not implementing the required values
+ * For a more exhaustive explanation, see https://github.com/elastic/elasticsearch/pull/42725
+ */
 public class OsProbe {
 
     private static final OperatingSystemMXBean osMxBean = ManagementFactory.getOperatingSystemMXBean();
@@ -64,12 +75,19 @@ public class OsProbe {
      */
     public long getFreePhysicalMemorySize() {
         if (getFreePhysicalMemorySize == null) {
-            return -1;
+            logger.warn("getFreePhysicalMemorySize is not available");
+            return 0;
         }
         try {
-            return (long) getFreePhysicalMemorySize.invoke(osMxBean);
+            final long freeMem = (long) getFreePhysicalMemorySize.invoke(osMxBean);
+            if (freeMem < 0) {
+                logger.debug("OS reported a negative free memory value [{}]", freeMem);
+                return 0;
+            }
+            return freeMem;
         } catch (Exception e) {
-            return -1;
+            logger.warn("exception retrieving free physical memory", e);
+            return 0;
         }
     }
 
@@ -78,12 +96,24 @@ public class OsProbe {
      */
     public long getTotalPhysicalMemorySize() {
         if (getTotalPhysicalMemorySize == null) {
-            return -1;
+            logger.warn("getTotalPhysicalMemorySize is not available");
+            return 0;
         }
         try {
-            return (long) getTotalPhysicalMemorySize.invoke(osMxBean);
+            long totalMem = (long) getTotalPhysicalMemorySize.invoke(osMxBean);
+            if (totalMem < 0) {
+                logger.debug("OS reported a negative total memory value [{}]", totalMem);
+                return 0;
+            }
+            if (totalMem == 0 && isDebian8()) {
+                // workaround for JDK bug on debian8: https://github.com/elastic/elasticsearch/issues/67089#issuecomment-756114654
+                totalMem = getTotalMemFromProcMeminfo();
+            }
+
+            return totalMem;
         } catch (Exception e) {
-            return -1;
+            logger.warn("exception retrieving total physical memory", e);
+            return 0;
         }
     }
 
@@ -92,12 +122,19 @@ public class OsProbe {
      */
     public long getFreeSwapSpaceSize() {
         if (getFreeSwapSpaceSize == null) {
-            return -1;
+            logger.warn("getFreeSwapSpaceSize is not available");
+            return 0;
         }
         try {
-            return (long) getFreeSwapSpaceSize.invoke(osMxBean);
+            final long mem = (long) getFreeSwapSpaceSize.invoke(osMxBean);
+            if (mem < 0) {
+                logger.debug("OS reported a negative free swap space size [{}]", mem);
+                return 0;
+            }
+            return mem;
         } catch (Exception e) {
-            return -1;
+            logger.warn("exception retrieving free swap space size", e);
+            return 0;
         }
     }
 
@@ -106,12 +143,19 @@ public class OsProbe {
      */
     public long getTotalSwapSpaceSize() {
         if (getTotalSwapSpaceSize == null) {
-            return -1;
+            logger.warn("getTotalSwapSpaceSize is not available");
+            return 0;
         }
         try {
-            return (long) getTotalSwapSpaceSize.invoke(osMxBean);
+            final long mem = (long) getTotalSwapSpaceSize.invoke(osMxBean);
+            if (mem < 0) {
+                logger.debug("OS reported a negative total swap space size [{}]", mem);
+                return 0;
+            }
+            return mem;
         } catch (Exception e) {
-            return -1;
+            logger.warn("exception retrieving total swap space size", e);
+            return 0;
         }
     }
 
@@ -183,7 +227,7 @@ public class OsProbe {
      */
     private String readSingleLine(final Path path) throws IOException {
         final List<String> lines = Files.readAllLines(path);
-        assert lines != null && lines.size() == 1;
+        assert lines.size() == 1 : String.join("\n", lines);
         return lines.get(0);
     }
 
@@ -245,7 +289,7 @@ public class OsProbe {
     @SuppressForbidden(reason = "access /proc/self/cgroup")
     List<String> readProcSelfCgroup() throws IOException {
         final List<String> lines = Files.readAllLines(PathUtils.get("/proc/self/cgroup"));
-        assert lines != null && !lines.isEmpty();
+        assert lines != null && lines.isEmpty() == false;
         return lines;
     }
 
@@ -447,16 +491,16 @@ public class OsProbe {
      */
     @SuppressForbidden(reason = "access /proc/self/cgroup, /sys/fs/cgroup/cpu, /sys/fs/cgroup/cpuacct and /sys/fs/cgroup/memory")
     boolean areCgroupStatsAvailable() {
-        if (!Files.exists(PathUtils.get("/proc/self/cgroup"))) {
+        if (Files.exists(PathUtils.get("/proc/self/cgroup")) == false) {
             return false;
         }
-        if (!Files.exists(PathUtils.get("/sys/fs/cgroup/cpu"))) {
+        if (Files.exists(PathUtils.get("/sys/fs/cgroup/cpu")) == false) {
             return false;
         }
-        if (!Files.exists(PathUtils.get("/sys/fs/cgroup/cpuacct"))) {
+        if (Files.exists(PathUtils.get("/sys/fs/cgroup/cpuacct")) == false) {
             return false;
         }
-        if (!Files.exists(PathUtils.get("/sys/fs/cgroup/memory"))) {
+        if (Files.exists(PathUtils.get("/sys/fs/cgroup/memory")) == false) {
             return false;
         }
         return true;
@@ -469,24 +513,33 @@ public class OsProbe {
      */
     private OsStats.Cgroup getCgroup() {
         try {
-            if (!areCgroupStatsAvailable()) {
+            if (areCgroupStatsAvailable() == false) {
                 return null;
             } else {
                 final Map<String, String> controllerMap = getControlGroups();
-                assert !controllerMap.isEmpty();
+                assert controllerMap.isEmpty() == false;
 
                 final String cpuAcctControlGroup = controllerMap.get("cpuacct");
-                assert cpuAcctControlGroup != null;
+                if (cpuAcctControlGroup == null) {
+                    logger.debug("no [cpuacct] data found in cgroup stats");
+                    return null;
+                }
                 final long cgroupCpuAcctUsageNanos = getCgroupCpuAcctUsageNanos(cpuAcctControlGroup);
 
                 final String cpuControlGroup = controllerMap.get("cpu");
-                assert cpuControlGroup != null;
+                if (cpuControlGroup == null) {
+                    logger.debug("no [cpu] data found in cgroup stats");
+                    return null;
+                }
                 final long cgroupCpuAcctCpuCfsPeriodMicros = getCgroupCpuAcctCpuCfsPeriodMicros(cpuControlGroup);
                 final long cgroupCpuAcctCpuCfsQuotaMicros = getCgroupCpuAcctCpuCfsQuotaMicros(cpuControlGroup);
                 final OsStats.Cgroup.CpuStat cpuStat = getCgroupCpuAcctCpuStat(cpuControlGroup);
 
                 final String memoryControlGroup = controllerMap.get("memory");
-                assert memoryControlGroup != null;
+                if (memoryControlGroup == null) {
+                    logger.debug("no [memory] data found in cgroup stats");
+                    return null;
+                }
                 final String cgroupMemoryLimitInBytes = getCgroupMemoryLimitInBytes(memoryControlGroup);
                 final String cgroupMemoryUsageInBytes = getCgroupMemoryUsageInBytes(memoryControlGroup);
 
@@ -547,16 +600,13 @@ public class OsProbe {
             final Optional<String> maybePrettyNameLine =
                     prettyNameLines.size() == 1 ? Optional.of(prettyNameLines.get(0)) : Optional.empty();
             if (maybePrettyNameLine.isPresent()) {
-                final String prettyNameLine = maybePrettyNameLine.get();
-                final String[] prettyNameFields = prettyNameLine.split("=");
-                assert prettyNameFields.length == 2 : prettyNameLine;
-                if (prettyNameFields[1].length() >= 3 &&
-                        (prettyNameFields[1].startsWith("\"") && prettyNameFields[1].endsWith("\"")) ||
-                        (prettyNameFields[1].startsWith("'") && prettyNameFields[1].endsWith("'"))) {
-                    return prettyNameFields[1].substring(1, prettyNameFields[1].length() - 1);
-                } else {
-                    return prettyNameFields[1];
-                }
+                // we trim since some OS contain trailing space, for example, Oracle Linux Server 6.9 has a trailing space after the quote
+                final String trimmedPrettyNameLine = maybePrettyNameLine.get().trim();
+                final Matcher matcher = Pattern.compile("PRETTY_NAME=(\"?|'?)?([^\"']+)\\1").matcher(trimmedPrettyNameLine);
+                final boolean matches = matcher.matches();
+                assert matches : trimmedPrettyNameLine;
+                assert matcher.groupCount() == 2 : trimmedPrettyNameLine;
+                return matcher.group(2);
             } else {
                 return Constants.OS_NAME;
             }
@@ -567,22 +617,82 @@ public class OsProbe {
     }
 
     /**
-     * The lines from {@code /etc/os-release} or {@code /usr/lib/os-release} as a fallback. These file represents identification of the
-     * underlying operating system. The structure of the file is newlines of key-value pairs of shell-compatible variable assignments.
+     * The lines from {@code /etc/os-release} or {@code /usr/lib/os-release} as a fallback, with an additional fallback to
+     * {@code /etc/system-release}. These files represent identification of the underlying operating system. The structure of the file is
+     * newlines of key-value pairs of shell-compatible variable assignments.
      *
-     * @return the lines from {@code /etc/os-release} or {@code /usr/lib/os-release}
-     * @throws IOException if an I/O exception occurs reading {@code /etc/os-release} or {@code /usr/lib/os-release}
+     * @return the lines from {@code /etc/os-release} or {@code /usr/lib/os-release} or {@code /etc/system-release}
+     * @throws IOException if an I/O exception occurs reading {@code /etc/os-release} or {@code /usr/lib/os-release} or
+     *                     {@code /etc/system-release}
      */
-    @SuppressForbidden(reason = "access /etc/os-release or /usr/lib/os-release")
+    @SuppressForbidden(reason = "access /etc/os-release or /usr/lib/os-release or /etc/system-release")
     List<String> readOsRelease() throws IOException {
         final List<String> lines;
         if (Files.exists(PathUtils.get("/etc/os-release"))) {
             lines = Files.readAllLines(PathUtils.get("/etc/os-release"));
-        } else {
+            assert lines != null && lines.isEmpty() == false;
+            return lines;
+        } else if (Files.exists(PathUtils.get("/usr/lib/os-release"))) {
             lines = Files.readAllLines(PathUtils.get("/usr/lib/os-release"));
+            assert lines != null && lines.isEmpty() == false;
+            return lines;
+        } else if (Files.exists(PathUtils.get("/etc/system-release"))) {
+            // fallback for older Red Hat-like OS
+            lines = Files.readAllLines(PathUtils.get("/etc/system-release"));
+            assert lines != null && lines.size() == 1;
+            return Collections.singletonList("PRETTY_NAME=\"" + lines.get(0) + "\"");
+        } else {
+            return Collections.emptyList();
         }
-        assert lines != null && lines.isEmpty() == false;
-        return lines;
+    }
+
+    /**
+     * Returns the lines from /proc/meminfo as a workaround for JDK bugs that prevent retrieval of total system memory
+     * on some Linux variants such as Debian8.
+     */
+    @SuppressForbidden(reason = "access /proc/meminfo")
+    List<String> readProcMeminfo() throws IOException {
+        final List<String> lines;
+        if (Files.exists(PathUtils.get("/proc/meminfo"))) {
+            lines = Files.readAllLines(PathUtils.get("/proc/meminfo"));
+            assert lines != null && lines.isEmpty() == false;
+            return lines;
+        } else {
+            return Collections.emptyList();
+        }
+    }
+
+    /**
+     * Retrieves system total memory in bytes from /proc/meminfo
+     */
+    long getTotalMemFromProcMeminfo() throws IOException {
+        List<String> meminfoLines = readProcMeminfo();
+        final List<String> memTotalLines = meminfoLines.stream().filter(line -> line.startsWith("MemTotal")).collect(Collectors.toList());
+        assert memTotalLines.size() <= 1 : memTotalLines;
+        if (memTotalLines.size() == 1) {
+            final String memTotalLine = memTotalLines.get(0);
+            int beginIdx = memTotalLine.indexOf("MemTotal:");
+            int endIdx = memTotalLine.lastIndexOf(" kB");
+            if (beginIdx + 9 < endIdx) {
+                final String memTotalString = memTotalLine.substring(beginIdx + 9, endIdx).trim();
+                try {
+                    long memTotalInKb = Long.parseLong(memTotalString);
+                    return memTotalInKb * 1024;
+                } catch (NumberFormatException e) {
+                    logger.warn("Unable to retrieve total memory from meminfo line [" + memTotalLine + "]");
+                    return 0;
+                }
+            } else {
+                logger.warn("Unable to retrieve total memory from meminfo line [" + memTotalLine + "]");
+                return 0;
+            }
+        } else {
+            return 0;
+        }
+    }
+
+    boolean isDebian8() throws IOException {
+        return Constants.LINUX && getPrettyName().equals("Debian GNU/Linux 8 (jessie)");
     }
 
     public OsStats osStats() {

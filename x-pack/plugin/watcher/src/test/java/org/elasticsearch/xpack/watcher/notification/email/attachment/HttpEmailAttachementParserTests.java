@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.watcher.notification.email.attachment;
 
@@ -20,11 +21,11 @@ import org.elasticsearch.xpack.watcher.common.http.HttpRequest;
 import org.elasticsearch.xpack.watcher.common.http.HttpRequestTemplate;
 import org.elasticsearch.xpack.watcher.common.http.HttpResponse;
 import org.elasticsearch.xpack.watcher.test.MockTextTemplateEngine;
-import org.joda.time.DateTime;
-import org.joda.time.DateTimeZone;
 import org.junit.Before;
 
 import java.io.IOException;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -137,7 +138,7 @@ public class HttpEmailAttachementParserTests extends ESTestCase {
     }
 
     private WatchExecutionContext createWatchExecutionContext() {
-        DateTime now = DateTime.now(DateTimeZone.UTC);
+        ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
         Wid wid = new Wid(randomAlphaOfLength(5), now);
         Map<String, Object> metadata = MapBuilder.<String, Object>newMapBuilder().put("_key", "_val").map();
         return mockExecutionContextBuilder("watch1")

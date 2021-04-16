@@ -1,11 +1,14 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.ml.action;
 
 import com.carrotsearch.hppc.cursors.ObjectObjectCursor;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.elasticsearch.ElasticsearchStatusException;
 import org.elasticsearch.ResourceNotFoundException;
 import org.elasticsearch.action.ActionListener;
@@ -14,81 +17,94 @@ import org.elasticsearch.action.admin.indices.alias.get.GetAliasesRequest;
 import org.elasticsearch.action.admin.indices.alias.get.GetAliasesResponse;
 import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequest;
 import org.elasticsearch.action.bulk.BulkItemResponse;
-import org.elasticsearch.action.bulk.BulkResponse;
-import org.elasticsearch.action.search.SearchAction;
+import org.elasticsearch.action.search.MultiSearchAction;
+import org.elasticsearch.action.search.MultiSearchRequest;
+import org.elasticsearch.action.search.MultiSearchResponse;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.action.support.master.AcknowledgedResponse;
-import org.elasticsearch.action.support.master.TransportMasterNodeAction;
+import org.elasticsearch.action.support.master.AcknowledgedTransportMasterNodeAction;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.client.ParentTaskAssigningClient;
-import org.elasticsearch.cluster.AckedClusterStateUpdateTask;
 import org.elasticsearch.cluster.ClusterState;
-import org.elasticsearch.cluster.ClusterStateUpdateTask;
 import org.elasticsearch.cluster.block.ClusterBlockException;
 import org.elasticsearch.cluster.block.ClusterBlockLevel;
-import org.elasticsearch.cluster.metadata.AliasMetaData;
+import org.elasticsearch.cluster.metadata.AliasMetadata;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
-import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.CheckedConsumer;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.IndexNotFoundException;
 import org.elasticsearch.index.query.ConstantScoreQueryBuilder;
 import org.elasticsearch.index.query.IdsQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.index.query.TermQueryBuilder;
+import org.elasticsearch.index.reindex.AbstractBulkByScrollRequest;
 import org.elasticsearch.index.reindex.BulkByScrollResponse;
 import org.elasticsearch.index.reindex.DeleteByQueryAction;
 import org.elasticsearch.index.reindex.DeleteByQueryRequest;
-import org.elasticsearch.persistent.PersistentTasksCustomMetaData;
+import org.elasticsearch.persistent.PersistentTasksCustomMetadata;
 import org.elasticsearch.persistent.PersistentTasksService;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.tasks.Task;
 import org.elasticsearch.tasks.TaskId;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
-import org.elasticsearch.xpack.core.ml.MlMetadata;
+import org.elasticsearch.xpack.core.action.util.PageParams;
 import org.elasticsearch.xpack.core.ml.MlTasks;
 import org.elasticsearch.xpack.core.ml.action.DeleteJobAction;
 import org.elasticsearch.xpack.core.ml.action.GetModelSnapshotsAction;
 import org.elasticsearch.xpack.core.ml.action.KillProcessAction;
-import org.elasticsearch.xpack.core.ml.action.util.PageParams;
 import org.elasticsearch.xpack.core.ml.job.config.Job;
+import org.elasticsearch.xpack.core.ml.job.config.JobState;
+import org.elasticsearch.xpack.core.ml.job.config.JobTaskState;
 import org.elasticsearch.xpack.core.ml.job.messages.Messages;
 import org.elasticsearch.xpack.core.ml.job.persistence.AnomalyDetectorsIndex;
 import org.elasticsearch.xpack.core.ml.job.persistence.AnomalyDetectorsIndexFields;
 import org.elasticsearch.xpack.core.ml.job.process.autodetect.state.CategorizerState;
 import org.elasticsearch.xpack.core.ml.job.process.autodetect.state.ModelSnapshot;
 import org.elasticsearch.xpack.core.ml.job.process.autodetect.state.Quantiles;
-import org.elasticsearch.xpack.ml.job.JobManager;
+import org.elasticsearch.xpack.core.ml.utils.ExceptionsHelper;
+import org.elasticsearch.xpack.ml.MlConfigMigrationEligibilityCheck;
+import org.elasticsearch.xpack.ml.datafeed.persistence.DatafeedConfigProvider;
+import org.elasticsearch.xpack.ml.job.persistence.JobConfigProvider;
 import org.elasticsearch.xpack.ml.job.persistence.JobDataDeleter;
 import org.elasticsearch.xpack.ml.job.persistence.JobResultsProvider;
-import org.elasticsearch.xpack.ml.notifications.Auditor;
+import org.elasticsearch.xpack.ml.notifications.AnomalyDetectionAuditor;
+import org.elasticsearch.xpack.ml.process.MlMemoryTracker;
 import org.elasticsearch.xpack.ml.utils.MlIndicesUtils;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 import static org.elasticsearch.xpack.core.ClientHelper.ML_ORIGIN;
 import static org.elasticsearch.xpack.core.ClientHelper.executeAsyncWithOrigin;
 
-public class TransportDeleteJobAction extends TransportMasterNodeAction<DeleteJobAction.Request, AcknowledgedResponse> {
+public class TransportDeleteJobAction extends AcknowledgedTransportMasterNodeAction<DeleteJobAction.Request> {
+
+    private static final Logger logger = LogManager.getLogger(TransportDeleteJobAction.class);
 
     private static final int MAX_SNAPSHOTS_TO_DELETE = 10000;
 
     private final Client client;
     private final PersistentTasksService persistentTasksService;
-    private final Auditor auditor;
+    private final AnomalyDetectionAuditor auditor;
     private final JobResultsProvider jobResultsProvider;
+    private final JobConfigProvider jobConfigProvider;
+    private final DatafeedConfigProvider datafeedConfigProvider;
+    private final MlMemoryTracker memoryTracker;
+    private final MlConfigMigrationEligibilityCheck migrationEligibilityCheck;
 
     /**
      * A map of task listeners by job_id.
@@ -99,27 +115,23 @@ public class TransportDeleteJobAction extends TransportMasterNodeAction<DeleteJo
     private final Map<String, List<ActionListener<AcknowledgedResponse>>> listenersByJobId;
 
     @Inject
-    public TransportDeleteJobAction(TransportService transportService, ClusterService clusterService,
+    public TransportDeleteJobAction(Settings settings, TransportService transportService, ClusterService clusterService,
                                     ThreadPool threadPool, ActionFilters actionFilters,
                                     IndexNameExpressionResolver indexNameExpressionResolver, PersistentTasksService persistentTasksService,
-                                    Client client, Auditor auditor, JobResultsProvider jobResultsProvider) {
+                                    Client client, AnomalyDetectionAuditor auditor, JobResultsProvider jobResultsProvider,
+                                    JobConfigProvider jobConfigProvider, DatafeedConfigProvider datafeedConfigProvider,
+                                    MlMemoryTracker memoryTracker) {
         super(DeleteJobAction.NAME, transportService, clusterService, threadPool, actionFilters,
-                indexNameExpressionResolver, DeleteJobAction.Request::new);
+                DeleteJobAction.Request::new, indexNameExpressionResolver, ThreadPool.Names.SAME);
         this.client = client;
         this.persistentTasksService = persistentTasksService;
         this.auditor = auditor;
         this.jobResultsProvider = jobResultsProvider;
+        this.jobConfigProvider = jobConfigProvider;
+        this.datafeedConfigProvider = datafeedConfigProvider;
+        this.memoryTracker = memoryTracker;
+        this.migrationEligibilityCheck = new MlConfigMigrationEligibilityCheck(settings, clusterService);
         this.listenersByJobId = new HashMap<>();
-    }
-
-    @Override
-    protected String executor() {
-        return ThreadPool.Names.SAME;
-    }
-
-    @Override
-    protected AcknowledgedResponse newResponse() {
-        return new AcknowledgedResponse();
     }
 
     @Override
@@ -128,16 +140,19 @@ public class TransportDeleteJobAction extends TransportMasterNodeAction<DeleteJo
     }
 
     @Override
-    protected void masterOperation(DeleteJobAction.Request request, ClusterState state, ActionListener<AcknowledgedResponse> listener) {
-        throw new UnsupportedOperationException("the Task parameter is required");
-    }
-
-    @Override
     protected void masterOperation(Task task, DeleteJobAction.Request request, ClusterState state,
                                    ActionListener<AcknowledgedResponse> listener) {
+
+        if (migrationEligibilityCheck.jobIsEligibleForMigration(request.getJobId(), state)) {
+            listener.onFailure(ExceptionsHelper.configHasNotBeenMigrated("delete job", request.getJobId()));
+            return;
+        }
+
         logger.debug("Deleting job '{}'", request.getJobId());
 
-        JobManager.getJobOrThrowIfUnknown(request.getJobId(), state);
+        if (request.isForce() == false) {
+            checkJobIsNotOpen(request.getJobId(), state);
+        }
 
         TaskId taskId = new TaskId(clusterService.localNode().getId(), task.getId());
         ParentTaskAssigningClient parentTaskClient = new ParentTaskAssigningClient(client, taskId);
@@ -156,12 +171,15 @@ public class TransportDeleteJobAction extends TransportMasterNodeAction<DeleteJo
             }
         }
 
-        auditor.info(request.getJobId(), Messages.getMessage(Messages.JOB_AUDIT_DELETING, taskId));
-
         // The listener that will be executed at the end of the chain will notify all listeners
         ActionListener<AcknowledgedResponse> finalListener = ActionListener.wrap(
                 ack -> notifyListeners(request.getJobId(), ack, null),
-                e -> notifyListeners(request.getJobId(), null, e)
+                e -> {
+                    notifyListeners(request.getJobId(), null, e);
+                    if ((ExceptionsHelper.unwrapCause(e) instanceof ResourceNotFoundException) == false) {
+                        auditor.error(request.getJobId(), Messages.getMessage(Messages.JOB_AUDIT_DELETING_FAILED, e.getMessage()));
+                    }
+                }
         );
 
         ActionListener<Boolean> markAsDeletingListener = ActionListener.wrap(
@@ -172,12 +190,28 @@ public class TransportDeleteJobAction extends TransportMasterNodeAction<DeleteJo
                         normalDeleteJob(parentTaskClient, request, finalListener);
                     }
                 },
-                e -> {
-                    auditor.error(request.getJobId(), Messages.getMessage(Messages.JOB_AUDIT_DELETING_FAILED, e.getMessage()));
-                    finalListener.onFailure(e);
-                });
+                finalListener::onFailure);
 
-        markJobAsDeleting(request.getJobId(), markAsDeletingListener, request.isForce());
+        ActionListener<Boolean> jobExistsListener = ActionListener.wrap(
+            response -> {
+                auditor.info(request.getJobId(), Messages.getMessage(Messages.JOB_AUDIT_DELETING, taskId));
+                markJobAsDeletingIfNotUsed(request.getJobId(), markAsDeletingListener);
+            },
+            e -> {
+                if (request.isForce()
+                    && MlTasks.getJobTask(request.getJobId(), state.getMetadata().custom(PersistentTasksCustomMetadata.TYPE)) != null) {
+                    logger.info(
+                        "[{}] config is missing but task exists. Attempting to delete tasks and stop process",
+                        request.getJobId());
+                    forceDeleteJob(parentTaskClient, request, finalListener);
+                } else {
+                    finalListener.onFailure(e);
+                }
+            });
+
+        // First check that the job exists, because we don't want to audit
+        // the beginning of its deletion if it didn't exist in the first place
+        jobConfigProvider.jobExists(request.getJobId(), true, jobExistsListener);
     }
 
     private void notifyListeners(String jobId, @Nullable AcknowledgedResponse ack, @Nullable Exception error) {
@@ -201,49 +235,34 @@ public class TransportDeleteJobAction extends TransportMasterNodeAction<DeleteJo
                                  ActionListener<AcknowledgedResponse> listener) {
         String jobId = request.getJobId();
 
+        // We clean up the memory tracker on delete rather than close as close is not a master node action
+        memoryTracker.removeAnomalyDetectorJob(jobId);
+
         // Step 4. When the job has been removed from the cluster state, return a response
         // -------
         CheckedConsumer<Boolean, Exception> apiResponseHandler = jobDeleted -> {
             if (jobDeleted) {
                 logger.info("Job [" + jobId + "] deleted");
                 auditor.info(jobId, Messages.getMessage(Messages.JOB_AUDIT_DELETED));
-                listener.onResponse(new AcknowledgedResponse(true));
+                listener.onResponse(AcknowledgedResponse.TRUE);
             } else {
-                listener.onResponse(new AcknowledgedResponse(false));
+                listener.onResponse(AcknowledgedResponse.FALSE);
             }
         };
 
-        // Step 3. When the physical storage has been deleted, remove from Cluster State
+        // Step 3. When the physical storage has been deleted, delete the job config document
         // -------
-        CheckedConsumer<Boolean, Exception> deleteJobStateHandler = response -> clusterService.submitStateUpdateTask(
-                "delete-job-" + jobId,
-                new AckedClusterStateUpdateTask<Boolean>(request, ActionListener.wrap(apiResponseHandler, listener::onFailure)) {
-
-                    @Override
-                    protected Boolean newResponse(boolean acknowledged) {
-                        return acknowledged && response;
-                    }
-
-                    @Override
-                    public ClusterState execute(ClusterState currentState) {
-                        MlMetadata currentMlMetadata = MlMetadata.getMlMetadata(currentState);
-                        if (currentMlMetadata.getJobs().containsKey(jobId) == false) {
-                            // We wouldn't have got here if the job never existed so
-                            // the Job must have been deleted by another action.
-                            // Don't error in this case
-                            return currentState;
-                        }
-
-                        MlMetadata.Builder builder = new MlMetadata.Builder(currentMlMetadata);
-                        builder.deleteJob(jobId, currentState.getMetaData().custom(PersistentTasksCustomMetaData.TYPE));
-                        return buildNewClusterState(currentState, builder);
-                    }
-                });
-
+        // Don't report an error if the document has already been deleted
+        CheckedConsumer<Boolean, Exception> deleteJobStateHandler = response -> jobConfigProvider.deleteJob(jobId, false,
+                ActionListener.wrap(
+                        deleteResponse -> apiResponseHandler.accept(Boolean.TRUE),
+                        listener::onFailure
+                )
+        );
 
         // Step 2. Remove the job from any calendars
         CheckedConsumer<Boolean, Exception> removeFromCalendarsHandler = response -> jobResultsProvider.removeJobFromCalendars(jobId,
-                ActionListener.wrap(deleteJobStateHandler::accept, listener::onFailure ));
+                ActionListener.wrap(deleteJobStateHandler::accept, listener::onFailure));
 
 
         // Step 1. Delete the physical storage
@@ -253,26 +272,25 @@ public class TransportDeleteJobAction extends TransportMasterNodeAction<DeleteJo
     private void deleteJobDocuments(ParentTaskAssigningClient parentTaskClient, String jobId,
                                     CheckedConsumer<Boolean, Exception> finishedHandler, Consumer<Exception> failureHandler) {
 
-        final String indexName = AnomalyDetectorsIndex.getPhysicalIndexFromState(clusterService.state(), jobId);
-        final String indexPattern = indexName + "-*";
+        AtomicReference<String[]> indexNames = new AtomicReference<>();
 
         final ActionListener<AcknowledgedResponse> completionHandler = ActionListener.wrap(
                 response -> finishedHandler.accept(response.isAcknowledged()),
                 failureHandler);
 
-        // Step 7. If we did not drop the index and after DBQ state done, we delete the aliases
+        // Step 9. If we did not drop the indices and after DBQ state done, we delete the aliases
         ActionListener<BulkByScrollResponse> dbqHandler = ActionListener.wrap(
                 bulkByScrollResponse -> {
-                    if (bulkByScrollResponse == null) { // no action was taken by DBQ, assume Index was deleted
-                        completionHandler.onResponse(new AcknowledgedResponse(true));
+                    if (bulkByScrollResponse == null) { // no action was taken by DBQ, assume indices were deleted
+                        completionHandler.onResponse(AcknowledgedResponse.TRUE);
                     } else {
                         if (bulkByScrollResponse.isTimedOut()) {
-                            logger.warn("[{}] DeleteByQuery for indices [{}, {}] timed out.", jobId, indexName, indexPattern);
+                            logger.warn("[{}] DeleteByQuery for indices [{}] timed out.", jobId, String.join(", ", indexNames.get()));
                         }
-                        if (!bulkByScrollResponse.getBulkFailures().isEmpty()) {
-                            logger.warn("[{}] {} failures and {} conflicts encountered while running DeleteByQuery on indices [{}, {}].",
+                        if (bulkByScrollResponse.getBulkFailures().isEmpty() == false) {
+                            logger.warn("[{}] {} failures and {} conflicts encountered while running DeleteByQuery on indices [{}].",
                                     jobId, bulkByScrollResponse.getBulkFailures().size(), bulkByScrollResponse.getVersionConflicts(),
-                                    indexName, indexPattern);
+                                    String.join(", ", indexNames.get()));
                             for (BulkItemResponse.Failure failure : bulkByScrollResponse.getBulkFailures()) {
                                 logger.warn("DBQ failure: " + failure);
                             }
@@ -282,19 +300,19 @@ public class TransportDeleteJobAction extends TransportMasterNodeAction<DeleteJo
                 },
                 failureHandler);
 
-        // Step 6. If we did not delete the index, we run a delete by query
+        // Step 8. If we did not delete the indices, we run a delete by query
         ActionListener<Boolean> deleteByQueryExecutor = ActionListener.wrap(
                 response -> {
-                    if (response) {
-                        logger.info("Running DBQ on [" + indexName + "," + indexPattern + "] for job [" + jobId + "]");
-                        DeleteByQueryRequest request = new DeleteByQueryRequest(indexName, indexPattern);
+                    if (response && indexNames.get().length > 0) {
+                        logger.info("[{}] running delete by query on [{}]", jobId, String.join(", ", indexNames.get()));
                         ConstantScoreQueryBuilder query =
-                                new ConstantScoreQueryBuilder(new TermQueryBuilder(Job.ID.getPreferredName(), jobId));
-                        request.setQuery(query);
-                        request.setIndicesOptions(MlIndicesUtils.addIgnoreUnavailable(IndicesOptions.lenientExpandOpen()));
-                        request.setSlices(5);
-                        request.setAbortOnVersionConflict(false);
-                        request.setRefresh(true);
+                            new ConstantScoreQueryBuilder(new TermQueryBuilder(Job.ID.getPreferredName(), jobId));
+                        DeleteByQueryRequest request = new DeleteByQueryRequest(indexNames.get())
+                            .setQuery(query)
+                            .setIndicesOptions(MlIndicesUtils.addIgnoreUnavailable(IndicesOptions.lenientExpandOpenHidden()))
+                            .setSlices(AbstractBulkByScrollRequest.AUTO_SLICES)
+                            .setAbortOnVersionConflict(false)
+                            .setRefresh(true);
 
                         executeAsyncWithOrigin(parentTaskClient, ML_ORIGIN, DeleteByQueryAction.INSTANCE, request, dbqHandler);
                     } else { // We did not execute DBQ, no need to delete aliases or check the response
@@ -303,56 +321,108 @@ public class TransportDeleteJobAction extends TransportMasterNodeAction<DeleteJo
                 },
                 failureHandler);
 
-        // Step 5. If we have any hits, that means we are NOT the only job on this index, and should not delete it
-        // if we do not have any hits, we can drop the index and then skip the DBQ and alias deletion
-        ActionListener<SearchResponse> customIndexSearchHandler = ActionListener.wrap(
-                searchResponse -> {
-                    if (searchResponse == null || searchResponse.getHits().totalHits > 0) {
-                        deleteByQueryExecutor.onResponse(true); // We need to run DBQ and alias deletion
-                    } else {
-                        logger.info("Running DELETE Index on [" + indexName + "] for job [" + jobId + "]");
-                        DeleteIndexRequest request = new DeleteIndexRequest(indexName);
-                        request.indicesOptions(IndicesOptions.lenientExpandOpen());
-                        // If we have deleted the index, then we don't need to delete the aliases or run the DBQ
-                        executeAsyncWithOrigin(
-                                parentTaskClient.threadPool().getThreadContext(),
-                                ML_ORIGIN,
-                                request,
-                                ActionListener.<AcknowledgedResponse>wrap(
-                                        response -> deleteByQueryExecutor.onResponse(false), // skip DBQ && Alias
-                                        failureHandler),
-                                parentTaskClient.admin().indices()::delete);
-                    }
-                },
-                failure -> {
-                    if (failure.getClass() == IndexNotFoundException.class) { // assume the index is already deleted
-                        deleteByQueryExecutor.onResponse(false); // skip DBQ && Alias
-                    } else {
-                        failureHandler.accept(failure);
-                    }
+        // Step 7. Handle each multi-search response. There should be one response for each underlying index.
+        // For each underlying index that contains results ONLY for the current job, we will delete that index.
+        // If there exists at least 1 index that has another job's results, we will run DBQ.
+        ActionListener<MultiSearchResponse> customIndexSearchHandler = ActionListener.wrap(
+           multiSearchResponse -> {
+               if (multiSearchResponse == null) {
+                   deleteByQueryExecutor.onResponse(true); // We need to run DBQ and alias deletion
+                   return;
+               }
+               String defaultSharedIndex = AnomalyDetectorsIndexFields.RESULTS_INDEX_PREFIX +
+                   AnomalyDetectorsIndexFields.RESULTS_INDEX_DEFAULT;
+               List<String> indicesToDelete = new ArrayList<>();
+               boolean needToRunDBQTemp = false;
+               assert multiSearchResponse.getResponses().length == indexNames.get().length;
+               int i = 0;
+               for (MultiSearchResponse.Item item : multiSearchResponse.getResponses()) {
+                   if (item.isFailure()) {
+                       ++i;
+                       if (ExceptionsHelper.unwrapCause(item.getFailure()) instanceof IndexNotFoundException) {
+                           // index is already deleted, no need to take action against it
+                           continue;
+                       } else {
+                           failureHandler.accept(item.getFailure());
+                           return;
+                       }
+                   }
+                   SearchResponse searchResponse = item.getResponse();
+                   if (searchResponse.getHits().getTotalHits().value > 0 || indexNames.get()[i].equals(defaultSharedIndex)) {
+                       needToRunDBQTemp = true;
+                   } else {
+                       indicesToDelete.add(indexNames.get()[i]);
+                   }
+                   ++i;
+               }
+               final boolean needToRunDBQ = needToRunDBQTemp;
+               if (indicesToDelete.isEmpty()) {
+                   deleteByQueryExecutor.onResponse(needToRunDBQ);
+                   return;
+               }
+               logger.info("[{}] deleting the following indices directly {}", jobId, indicesToDelete);
+               DeleteIndexRequest request = new DeleteIndexRequest(indicesToDelete.toArray(String[]::new));
+               request.indicesOptions(IndicesOptions.lenientExpandOpenHidden());
+               executeAsyncWithOrigin(
+                   parentTaskClient.threadPool().getThreadContext(),
+                   ML_ORIGIN,
+                   request,
+                   ActionListener.<AcknowledgedResponse>wrap(
+                       response -> deleteByQueryExecutor.onResponse(needToRunDBQ), // only run DBQ if there is a shared index
+                       failureHandler),
+                   parentTaskClient.admin().indices()::delete);
+           },
+           failure -> {
+               if (ExceptionsHelper.unwrapCause(failure) instanceof IndexNotFoundException) { // assume the index is already deleted
+                   deleteByQueryExecutor.onResponse(false); // skip DBQ && Alias
+               } else {
+                   failureHandler.accept(failure);
+               }
+           }
+        );
+
+        // Step 6. If we successfully find a job, gather information about its result indices.
+        // This will execute a multi-search action for every concrete index behind the job results alias.
+        // If there are no concrete indices, take no action and go to the next step.
+        ActionListener<Job.Builder> getJobHandler = ActionListener.wrap(
+            builder -> {
+                indexNames.set(indexNameExpressionResolver.concreteIndexNames(clusterService.state(),
+                    IndicesOptions.lenientExpandOpen(), AnomalyDetectorsIndex.jobResultsAliasedName(jobId)));
+                if (indexNames.get().length == 0) {
+                    // don't bother searching the index any further - it's already been closed or deleted
+                    customIndexSearchHandler.onResponse(null);
+                    return;
                 }
+                MultiSearchRequest multiSearchRequest = new MultiSearchRequest();
+                // It is important that the requests are in the same order as the index names.
+                // This is because responses are ordered according to their requests.
+                for (String indexName : indexNames.get()) {
+                    SearchSourceBuilder source = new SearchSourceBuilder()
+                        .size(0)
+                        // if we have just one hit we cannot delete the index
+                        .trackTotalHitsUpTo(1)
+                        .query(QueryBuilders.boolQuery().filter(
+                            QueryBuilders.boolQuery().mustNot(QueryBuilders.termQuery(Job.ID.getPreferredName(), jobId))));
+                    multiSearchRequest.add(new SearchRequest(indexName).source(source));
+                }
+                executeAsyncWithOrigin(parentTaskClient,
+                    ML_ORIGIN,
+                    MultiSearchAction.INSTANCE,
+                    multiSearchRequest,
+                    customIndexSearchHandler);
+            },
+            failureHandler
         );
 
-        // Step 4. Determine if we are on a shared index by looking at `.ml-anomalies-shared` or the custom index's aliases
+        // Step 5. Get the job as the initial result index name is required
+        ActionListener<Boolean> deleteAnnotationsHandler = ActionListener.wrap(
+                response -> jobConfigProvider.getJob(jobId, getJobHandler),
+                failureHandler);
+
+        // Step 4. Delete annotations associated with the job
         ActionListener<Boolean> deleteCategorizerStateHandler = ActionListener.wrap(
-                response -> {
-                    if (indexName.equals(AnomalyDetectorsIndexFields.RESULTS_INDEX_PREFIX +
-                            AnomalyDetectorsIndexFields.RESULTS_INDEX_DEFAULT)) {
-                        //don't bother searching the index any further, we are on the default shared
-                        customIndexSearchHandler.onResponse(null);
-                    } else {
-                        SearchSourceBuilder source = new SearchSourceBuilder()
-                                .size(1)
-                                .query(QueryBuilders.boolQuery().filter(
-                                        QueryBuilders.boolQuery().mustNot(QueryBuilders.termQuery(Job.ID.getPreferredName(), jobId))));
-
-                        SearchRequest searchRequest = new SearchRequest(indexName);
-                        searchRequest.source(source);
-                        executeAsyncWithOrigin(parentTaskClient, ML_ORIGIN, SearchAction.INSTANCE, searchRequest, customIndexSearchHandler);
-                    }
-                },
-                failureHandler
-        );
+                response -> deleteAnnotations(parentTaskClient, jobId, deleteAnnotationsHandler),
+                failureHandler);
 
         // Step 3. Delete quantiles done, delete the categorizer state
         ActionListener<Boolean> deleteQuantilesHandler = ActionListener.wrap(
@@ -360,7 +430,7 @@ public class TransportDeleteJobAction extends TransportMasterNodeAction<DeleteJo
                 failureHandler);
 
         // Step 2. Delete state done, delete the quantiles
-        ActionListener<BulkResponse> deleteStateHandler = ActionListener.wrap(
+        ActionListener<BulkByScrollResponse> deleteStateHandler = ActionListener.wrap(
                 bulkResponse -> deleteQuantiles(parentTaskClient, jobId, deleteQuantilesHandler),
                 failureHandler);
 
@@ -369,30 +439,20 @@ public class TransportDeleteJobAction extends TransportMasterNodeAction<DeleteJo
     }
 
     private void deleteQuantiles(ParentTaskAssigningClient parentTaskClient, String jobId, ActionListener<Boolean> finishedHandler) {
-        // The quantiles type and doc ID changed in v5.5 so delete both the old and new format
-        DeleteByQueryRequest request = new DeleteByQueryRequest(AnomalyDetectorsIndex.jobStateIndexName());
         // Just use ID here, not type, as trying to delete different types spams the logs with an exception stack trace
-        IdsQueryBuilder query = new IdsQueryBuilder().addIds(Quantiles.documentId(jobId),
-                // TODO: remove in 7.0
-                Quantiles.v54DocumentId(jobId));
-        request.setQuery(query);
-        request.setIndicesOptions(MlIndicesUtils.addIgnoreUnavailable(IndicesOptions.lenientExpandOpen()));
-        request.setAbortOnVersionConflict(false);
-        request.setRefresh(true);
+        IdsQueryBuilder query = new IdsQueryBuilder().addIds(Quantiles.documentId(jobId));
+        DeleteByQueryRequest request = new DeleteByQueryRequest(AnomalyDetectorsIndex.jobStateIndexPattern())
+            .setQuery(query)
+            .setIndicesOptions(MlIndicesUtils.addIgnoreUnavailable(IndicesOptions.lenientExpandOpen()))
+            .setAbortOnVersionConflict(false)
+            .setRefresh(true);
 
         executeAsyncWithOrigin(parentTaskClient, ML_ORIGIN, DeleteByQueryAction.INSTANCE, request, ActionListener.wrap(
                 response -> finishedHandler.onResponse(true),
-                e -> {
-                    // It's not a problem for us if the index wasn't found - it's equivalent to document not found
-                    if (e instanceof IndexNotFoundException) {
-                        finishedHandler.onResponse(true);
-                    } else {
-                        finishedHandler.onFailure(e);
-                    }
-                }));
+                ignoreIndexNotFoundException(finishedHandler)));
     }
 
-    private void deleteModelState(ParentTaskAssigningClient parentTaskClient, String jobId, ActionListener<BulkResponse> listener) {
+    private void deleteModelState(ParentTaskAssigningClient parentTaskClient, String jobId, ActionListener<BulkByScrollResponse> listener) {
         GetModelSnapshotsAction.Request request = new GetModelSnapshotsAction.Request(jobId, null);
         request.setPageParams(new PageParams(0, MAX_SNAPSHOTS_TO_DELETE));
         executeAsyncWithOrigin(parentTaskClient, ML_ORIGIN, GetModelSnapshotsAction.INSTANCE, request, ActionListener.wrap(
@@ -406,16 +466,13 @@ public class TransportDeleteJobAction extends TransportMasterNodeAction<DeleteJo
 
     private void deleteCategorizerState(ParentTaskAssigningClient parentTaskClient, String jobId, int docNum,
                                         ActionListener<Boolean> finishedHandler) {
-        // The categorizer state type and doc ID changed in v5.5 so delete both the old and new format
-        DeleteByQueryRequest request = new DeleteByQueryRequest(AnomalyDetectorsIndex.jobStateIndexName());
         // Just use ID here, not type, as trying to delete different types spams the logs with an exception stack trace
-        IdsQueryBuilder query = new IdsQueryBuilder().addIds(CategorizerState.documentId(jobId, docNum),
-                // TODO: remove in 7.0
-                CategorizerState.v54DocumentId(jobId, docNum));
-        request.setQuery(query);
-        request.setIndicesOptions(MlIndicesUtils.addIgnoreUnavailable(IndicesOptions.lenientExpandOpen()));
-        request.setAbortOnVersionConflict(false);
-        request.setRefresh(true);
+        IdsQueryBuilder query = new IdsQueryBuilder().addIds(CategorizerState.documentId(jobId, docNum));
+        DeleteByQueryRequest request = new DeleteByQueryRequest(AnomalyDetectorsIndex.jobStateIndexPattern())
+            .setQuery(query)
+            .setIndicesOptions(MlIndicesUtils.addIgnoreUnavailable(IndicesOptions.lenientExpandOpen()))
+            .setAbortOnVersionConflict(false)
+            .setRefresh(true);
 
         executeAsyncWithOrigin(parentTaskClient, ML_ORIGIN, DeleteByQueryAction.INSTANCE, request, ActionListener.wrap(
                 response -> {
@@ -428,14 +485,24 @@ public class TransportDeleteJobAction extends TransportMasterNodeAction<DeleteJo
                     }
                     finishedHandler.onResponse(true);
                 },
-                e -> {
-                    // It's not a problem for us if the index wasn't found - it's equivalent to document not found
-                    if (e instanceof IndexNotFoundException) {
-                        finishedHandler.onResponse(true);
-                    } else {
-                        finishedHandler.onFailure(e);
-                    }
-                }));
+                ignoreIndexNotFoundException(finishedHandler)));
+    }
+
+    private void deleteAnnotations(ParentTaskAssigningClient parentTaskClient, String jobId, ActionListener<Boolean> finishedHandler) {
+        JobDataDeleter deleter = new JobDataDeleter(parentTaskClient, jobId);
+        deleter.deleteAllAnnotations(
+            ActionListener.wrap(r -> finishedHandler.onResponse(true), ignoreIndexNotFoundException(finishedHandler)));
+    }
+
+    private static Consumer<Exception> ignoreIndexNotFoundException(ActionListener<Boolean> finishedHandler) {
+        return e -> {
+            // It's not a problem for us if the index wasn't found - it's equivalent to document not found
+            if (ExceptionsHelper.unwrapCause(e) instanceof IndexNotFoundException) {
+                finishedHandler.onResponse(true);
+            } else {
+                finishedHandler.onFailure(e);
+            }
+        };
     }
 
     private void deleteAliases(ParentTaskAssigningClient parentTaskClient, String jobId,
@@ -445,7 +512,7 @@ public class TransportDeleteJobAction extends TransportMasterNodeAction<DeleteJo
 
         // first find the concrete indices associated with the aliases
         GetAliasesRequest aliasesRequest = new GetAliasesRequest().aliases(readAliasName, writeAliasName)
-                .indicesOptions(IndicesOptions.lenientExpandOpen());
+                .indicesOptions(IndicesOptions.lenientExpandOpenHidden());
         executeAsyncWithOrigin(parentTaskClient.threadPool().getThreadContext(), ML_ORIGIN, aliasesRequest,
                 ActionListener.<GetAliasesResponse>wrap(
                         getAliasesResponse -> {
@@ -454,13 +521,11 @@ public class TransportDeleteJobAction extends TransportMasterNodeAction<DeleteJo
                             if (removeRequest == null) {
                                 // don't error if the job's aliases have already been deleted - carry on and delete the
                                 // rest of the job's data
-                                finishedHandler.onResponse(new AcknowledgedResponse(true));
+                                finishedHandler.onResponse(AcknowledgedResponse.TRUE);
                                 return;
                             }
                             executeAsyncWithOrigin(parentTaskClient.threadPool().getThreadContext(), ML_ORIGIN, removeRequest,
-                                    ActionListener.<AcknowledgedResponse>wrap(
-                                            finishedHandler::onResponse,
-                                            finishedHandler::onFailure),
+                                    finishedHandler,
                                     parentTaskClient.admin().indices()::aliases);
                         },
                         finishedHandler::onFailure), parentTaskClient.admin().indices()::getAliases);
@@ -469,9 +534,9 @@ public class TransportDeleteJobAction extends TransportMasterNodeAction<DeleteJo
     private IndicesAliasesRequest buildRemoveAliasesRequest(GetAliasesResponse getAliasesResponse) {
         Set<String> aliases = new HashSet<>();
         List<String> indices = new ArrayList<>();
-        for (ObjectObjectCursor<String, List<AliasMetaData>> entry : getAliasesResponse.getAliases()) {
+        for (ObjectObjectCursor<String, List<AliasMetadata>> entry : getAliasesResponse.getAliases()) {
             // The response includes _all_ indices, but only those associated with
-            // the aliases we asked about will have associated AliasMetaData
+            // the aliases we asked about will have associated AliasMetadata
             if (entry.value.isEmpty() == false) {
                 indices.add(entry.key);
                 entry.value.forEach(metadata -> aliases.add(metadata.getAlias()));
@@ -500,7 +565,7 @@ public class TransportDeleteJobAction extends TransportMasterNodeAction<DeleteJo
 
             @Override
             public void onFailure(Exception e) {
-                if (e instanceof ResourceNotFoundException) {
+                if (ExceptionsHelper.unwrapCause(e) instanceof ResourceNotFoundException) {
                     normalDeleteJob(parentTaskClient, request, listener);
                 } else {
                     listener.onFailure(e);
@@ -513,7 +578,7 @@ public class TransportDeleteJobAction extends TransportMasterNodeAction<DeleteJo
         ActionListener<KillProcessAction.Response> killJobListener = ActionListener.wrap(
                 response -> removePersistentTask(request.getJobId(), state, removeTaskListener),
                 e -> {
-                    if (e instanceof ElasticsearchStatusException) {
+                    if (ExceptionsHelper.unwrapCause(e) instanceof ElasticsearchStatusException) {
                         // Killing the process marks the task as completed so it
                         // may have disappeared when we get here
                         removePersistentTask(request.getJobId(), state, removeTaskListener);
@@ -535,57 +600,38 @@ public class TransportDeleteJobAction extends TransportMasterNodeAction<DeleteJo
 
     private void removePersistentTask(String jobId, ClusterState currentState,
                                       ActionListener<Boolean> listener) {
-        PersistentTasksCustomMetaData tasks = currentState.getMetaData().custom(PersistentTasksCustomMetaData.TYPE);
+        PersistentTasksCustomMetadata tasks = currentState.getMetadata().custom(PersistentTasksCustomMetadata.TYPE);
 
-        PersistentTasksCustomMetaData.PersistentTask<?> jobTask = MlTasks.getJobTask(jobId, tasks);
+        PersistentTasksCustomMetadata.PersistentTask<?> jobTask = MlTasks.getJobTask(jobId, tasks);
         if (jobTask == null) {
             listener.onResponse(null);
         } else {
-            persistentTasksService.sendRemoveRequest(jobTask.getId(),
-                    new ActionListener<PersistentTasksCustomMetaData.PersistentTask<?>>() {
-                        @Override
-                        public void onResponse(PersistentTasksCustomMetaData.PersistentTask<?> task) {
-                            listener.onResponse(Boolean.TRUE);
-                        }
-
-                        @Override
-                        public void onFailure(Exception e) {
-                            listener.onFailure(e);
-                        }
-                    });
+            persistentTasksService.sendRemoveRequest(jobTask.getId(), listener.delegateFailure((l, task) -> l.onResponse(Boolean.TRUE)));
         }
     }
 
-    private void markJobAsDeleting(String jobId, ActionListener<Boolean> listener, boolean force) {
-        clusterService.submitStateUpdateTask("mark-job-as-deleted", new ClusterStateUpdateTask() {
-            @Override
-            public ClusterState execute(ClusterState currentState) {
-                PersistentTasksCustomMetaData tasks = currentState.metaData().custom(PersistentTasksCustomMetaData.TYPE);
-                MlMetadata.Builder builder = new MlMetadata.Builder(MlMetadata.getMlMetadata(currentState));
-                builder.markJobAsDeleting(jobId, tasks, force);
-                return buildNewClusterState(currentState, builder);
-            }
-
-            @Override
-            public void onFailure(String source, Exception e) {
-                listener.onFailure(e);
-            }
-
-            @Override
-            public void clusterStateProcessed(String source, ClusterState oldState, ClusterState newState) {
-                logger.debug("Job [" + jobId + "] is successfully marked as deleted");
-                listener.onResponse(true);
-            }
-        });
+    private void checkJobIsNotOpen(String jobId, ClusterState state) {
+        PersistentTasksCustomMetadata tasks = state.metadata().custom(PersistentTasksCustomMetadata.TYPE);
+        PersistentTasksCustomMetadata.PersistentTask<?> jobTask = MlTasks.getJobTask(jobId, tasks);
+        if (jobTask != null) {
+            JobTaskState jobTaskState = (JobTaskState) jobTask.getState();
+            throw ExceptionsHelper.conflictStatusException("Cannot delete job [" + jobId + "] because the job is "
+                    + ((jobTaskState == null) ? JobState.OPENING : jobTaskState.getState()));
+        }
     }
 
-    static boolean jobIsDeletedFromState(String jobId, ClusterState clusterState) {
-        return !MlMetadata.getMlMetadata(clusterState).getJobs().containsKey(jobId);
-    }
+    private void markJobAsDeletingIfNotUsed(String jobId, ActionListener<Boolean> listener) {
 
-    private static ClusterState buildNewClusterState(ClusterState currentState, MlMetadata.Builder builder) {
-        ClusterState.Builder newState = ClusterState.builder(currentState);
-        newState.metaData(MetaData.builder(currentState.getMetaData()).putCustom(MlMetadata.TYPE, builder.build()).build());
-        return newState.build();
+        datafeedConfigProvider.findDatafeedsForJobIds(Collections.singletonList(jobId), ActionListener.wrap(
+                datafeedIds -> {
+                    if (datafeedIds.isEmpty() == false) {
+                        listener.onFailure(ExceptionsHelper.conflictStatusException("Cannot delete job [" + jobId + "] because datafeed ["
+                                + datafeedIds.iterator().next() + "] refers to it"));
+                        return;
+                    }
+                    jobConfigProvider.markJobAsDeleting(jobId, listener);
+                },
+                listener::onFailure
+        ));
     }
 }

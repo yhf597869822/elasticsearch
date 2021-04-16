@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.sql.proto;
 
@@ -17,8 +18,8 @@ public class SqlClearCursorRequest extends AbstractSqlRequest {
 
     private final String cursor;
 
-    public SqlClearCursorRequest(Mode mode, String cursor) {
-        super(mode);
+    public SqlClearCursorRequest(String cursor, RequestInfo requestInfo) {
+        super(requestInfo);
         this.cursor = cursor;
     }
 
@@ -30,7 +31,7 @@ public class SqlClearCursorRequest extends AbstractSqlRequest {
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        if (!super.equals(o)) return false;
+        if (super.equals(o) == false) return false;
         SqlClearCursorRequest that = (SqlClearCursorRequest) o;
         return Objects.equals(cursor, that.cursor);
     }
@@ -43,6 +44,13 @@ public class SqlClearCursorRequest extends AbstractSqlRequest {
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.field("cursor", cursor);
+        builder.field("mode", mode().toString());
+        if (clientId() != null) {
+            builder.field("client_id", clientId());
+        }
+        if (version() != null) {
+            builder.field("version", version().toString());
+        }
         return builder;
     }
 }

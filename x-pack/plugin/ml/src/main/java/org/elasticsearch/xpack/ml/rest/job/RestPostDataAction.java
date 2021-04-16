@@ -1,36 +1,43 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.ml.rest.job;
 
 import org.elasticsearch.client.node.NodeClient;
-import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.RestApiVersion;
 import org.elasticsearch.rest.BaseRestHandler;
-import org.elasticsearch.rest.RestController;
 import org.elasticsearch.rest.RestRequest;
 import org.elasticsearch.rest.action.RestStatusToXContentListener;
-import org.elasticsearch.xpack.ml.MachineLearning;
 import org.elasticsearch.xpack.core.ml.action.PostDataAction;
 import org.elasticsearch.xpack.core.ml.job.config.Job;
 
 import java.io.IOException;
+import java.util.List;
+
+import static org.elasticsearch.rest.RestRequest.Method.POST;
+import static org.elasticsearch.xpack.ml.MachineLearning.BASE_PATH;
 
 public class RestPostDataAction extends BaseRestHandler {
 
     private static final String DEFAULT_RESET_START = "";
     private static final String DEFAULT_RESET_END = "";
 
-    public RestPostDataAction(Settings settings, RestController controller) {
-        super(settings);
-        controller.registerHandler(RestRequest.Method.POST, MachineLearning.BASE_PATH
-                + "anomaly_detectors/{" + Job.ID.getPreferredName() + "}/_data", this);
+    @Override
+    public List<Route> routes() {
+        return List.of(
+            Route.builder(POST, BASE_PATH + "anomaly_detectors/{" + Job.ID + "}/_data")
+                .deprecated("Posting data directly to anomaly detection jobs is deprecated, " +
+                    "in a future major version it will be compulsory to use a datafeed", RestApiVersion.V_8
+                ).build()
+        );
     }
 
     @Override
     public String getName() {
-        return "xpack_ml_post_data_action";
+        return "ml_post_data_action";
     }
 
     @Override

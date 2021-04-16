@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 package org.elasticsearch.client.ml.job.config;
 
@@ -56,12 +45,11 @@ public class AnalysisConfig implements ToXContentObject {
     public static final ParseField CATEGORIZATION_FIELD_NAME = new ParseField("categorization_field_name");
     public static final ParseField CATEGORIZATION_FILTERS = new ParseField("categorization_filters");
     public static final ParseField CATEGORIZATION_ANALYZER = CategorizationAnalyzerConfig.CATEGORIZATION_ANALYZER;
+    public static final ParseField PER_PARTITION_CATEGORIZATION = new ParseField("per_partition_categorization");
     public static final ParseField LATENCY = new ParseField("latency");
     public static final ParseField SUMMARY_COUNT_FIELD_NAME = new ParseField("summary_count_field_name");
     public static final ParseField DETECTORS = new ParseField("detectors");
     public static final ParseField INFLUENCERS = new ParseField("influencers");
-    public static final ParseField OVERLAPPING_BUCKETS = new ParseField("overlapping_buckets");
-    public static final ParseField RESULT_FINALIZATION_WINDOW = new ParseField("result_finalization_window");
     public static final ParseField MULTIVARIATE_BY_FIELDS = new ParseField("multivariate_by_fields");
 
     @SuppressWarnings("unchecked")
@@ -80,12 +68,12 @@ public class AnalysisConfig implements ToXContentObject {
         PARSER.declareField(Builder::setCategorizationAnalyzerConfig,
             (p, c) -> CategorizationAnalyzerConfig.buildFromXContentFragment(p),
             CATEGORIZATION_ANALYZER, ObjectParser.ValueType.OBJECT_OR_STRING);
+        PARSER.declareObject(Builder::setPerPartitionCategorizationConfig, PerPartitionCategorizationConfig.PARSER,
+            PER_PARTITION_CATEGORIZATION);
         PARSER.declareString((builder, val) ->
             builder.setLatency(TimeValue.parseTimeValue(val, LATENCY.getPreferredName())), LATENCY);
         PARSER.declareString(Builder::setSummaryCountFieldName, SUMMARY_COUNT_FIELD_NAME);
         PARSER.declareStringArray(Builder::setInfluencers, INFLUENCERS);
-        PARSER.declareBoolean(Builder::setOverlappingBuckets, OVERLAPPING_BUCKETS);
-        PARSER.declareLong(Builder::setResultFinalizationWindow, RESULT_FINALIZATION_WINDOW);
         PARSER.declareBoolean(Builder::setMultivariateByFields, MULTIVARIATE_BY_FIELDS);
     }
 
@@ -96,28 +84,26 @@ public class AnalysisConfig implements ToXContentObject {
     private final String categorizationFieldName;
     private final List<String> categorizationFilters;
     private final CategorizationAnalyzerConfig categorizationAnalyzerConfig;
+    private final PerPartitionCategorizationConfig perPartitionCategorizationConfig;
     private final TimeValue latency;
     private final String summaryCountFieldName;
     private final List<Detector> detectors;
     private final List<String> influencers;
-    private final Boolean overlappingBuckets;
-    private final Long resultFinalizationWindow;
     private final Boolean multivariateByFields;
 
     private AnalysisConfig(TimeValue bucketSpan, String categorizationFieldName, List<String> categorizationFilters,
-                           CategorizationAnalyzerConfig categorizationAnalyzerConfig, TimeValue latency, String summaryCountFieldName,
-                           List<Detector> detectors, List<String> influencers, Boolean overlappingBuckets, Long resultFinalizationWindow,
-                           Boolean multivariateByFields) {
+                           CategorizationAnalyzerConfig categorizationAnalyzerConfig,
+                           PerPartitionCategorizationConfig perPartitionCategorizationConfig, TimeValue latency,
+                           String summaryCountFieldName, List<Detector> detectors, List<String> influencers, Boolean multivariateByFields) {
         this.detectors = Collections.unmodifiableList(detectors);
         this.bucketSpan = bucketSpan;
         this.latency = latency;
         this.categorizationFieldName = categorizationFieldName;
         this.categorizationAnalyzerConfig = categorizationAnalyzerConfig;
+        this.perPartitionCategorizationConfig = perPartitionCategorizationConfig;
         this.categorizationFilters = categorizationFilters == null ? null : Collections.unmodifiableList(categorizationFilters);
         this.summaryCountFieldName = summaryCountFieldName;
         this.influencers = Collections.unmodifiableList(influencers);
-        this.overlappingBuckets = overlappingBuckets;
-        this.resultFinalizationWindow = resultFinalizationWindow;
         this.multivariateByFields = multivariateByFields;
     }
 
@@ -140,6 +126,10 @@ public class AnalysisConfig implements ToXContentObject {
 
     public CategorizationAnalyzerConfig getCategorizationAnalyzerConfig() {
         return categorizationAnalyzerConfig;
+    }
+
+    public PerPartitionCategorizationConfig getPerPartitionCategorizationConfig() {
+        return perPartitionCategorizationConfig;
     }
 
     /**
@@ -175,14 +165,6 @@ public class AnalysisConfig implements ToXContentObject {
      */
     public List<String> getInfluencers() {
         return influencers;
-    }
-
-    public Boolean getOverlappingBuckets() {
-        return overlappingBuckets;
-    }
-
-    public Long getResultFinalizationWindow() {
-        return resultFinalizationWindow;
     }
 
     public Boolean getMultivariateByFields() {
@@ -243,6 +225,9 @@ public class AnalysisConfig implements ToXContentObject {
             // gets written as a single string.
             categorizationAnalyzerConfig.toXContent(builder, params);
         }
+        if (perPartitionCategorizationConfig != null) {
+            builder.field(PER_PARTITION_CATEGORIZATION.getPreferredName(), perPartitionCategorizationConfig);
+        }
         if (latency != null) {
             builder.field(LATENCY.getPreferredName(), latency.getStringRep());
         }
@@ -255,12 +240,6 @@ public class AnalysisConfig implements ToXContentObject {
         }
         builder.endArray();
         builder.field(INFLUENCERS.getPreferredName(), influencers);
-        if (overlappingBuckets != null) {
-            builder.field(OVERLAPPING_BUCKETS.getPreferredName(), overlappingBuckets);
-        }
-        if (resultFinalizationWindow != null) {
-            builder.field(RESULT_FINALIZATION_WINDOW.getPreferredName(), resultFinalizationWindow);
-        }
         if (multivariateByFields != null) {
             builder.field(MULTIVARIATE_BY_FIELDS.getPreferredName(), multivariateByFields);
         }
@@ -284,20 +263,18 @@ public class AnalysisConfig implements ToXContentObject {
             Objects.equals(categorizationFieldName, that.categorizationFieldName) &&
             Objects.equals(categorizationFilters, that.categorizationFilters) &&
             Objects.equals(categorizationAnalyzerConfig, that.categorizationAnalyzerConfig) &&
+            Objects.equals(perPartitionCategorizationConfig, that.perPartitionCategorizationConfig) &&
             Objects.equals(summaryCountFieldName, that.summaryCountFieldName) &&
             Objects.equals(detectors, that.detectors) &&
             Objects.equals(influencers, that.influencers) &&
-            Objects.equals(overlappingBuckets, that.overlappingBuckets) &&
-            Objects.equals(resultFinalizationWindow, that.resultFinalizationWindow) &&
             Objects.equals(multivariateByFields, that.multivariateByFields);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(
-            bucketSpan, categorizationFieldName, categorizationFilters, categorizationAnalyzerConfig, latency,
-            summaryCountFieldName, detectors, influencers, overlappingBuckets, resultFinalizationWindow,
-            multivariateByFields);
+            bucketSpan, categorizationFieldName, categorizationFilters, categorizationAnalyzerConfig, perPartitionCategorizationConfig,
+            latency, summaryCountFieldName, detectors, influencers, multivariateByFields);
     }
 
     public static Builder builder(List<Detector> detectors) {
@@ -312,10 +289,9 @@ public class AnalysisConfig implements ToXContentObject {
         private String categorizationFieldName;
         private List<String> categorizationFilters;
         private CategorizationAnalyzerConfig categorizationAnalyzerConfig;
+        private PerPartitionCategorizationConfig perPartitionCategorizationConfig;
         private String summaryCountFieldName;
         private List<String> influencers = new ArrayList<>();
-        private Boolean overlappingBuckets;
-        private Long resultFinalizationWindow;
         private Boolean multivariateByFields;
 
         public Builder(List<Detector> detectors) {
@@ -330,10 +306,9 @@ public class AnalysisConfig implements ToXContentObject {
             this.categorizationFilters = analysisConfig.categorizationFilters == null ? null
                 : new ArrayList<>(analysisConfig.categorizationFilters);
             this.categorizationAnalyzerConfig = analysisConfig.categorizationAnalyzerConfig;
+            this.perPartitionCategorizationConfig = analysisConfig.perPartitionCategorizationConfig;
             this.summaryCountFieldName = analysisConfig.summaryCountFieldName;
             this.influencers = new ArrayList<>(analysisConfig.influencers);
-            this.overlappingBuckets = analysisConfig.overlappingBuckets;
-            this.resultFinalizationWindow = analysisConfig.resultFinalizationWindow;
             this.multivariateByFields = analysisConfig.multivariateByFields;
         }
 
@@ -381,6 +356,11 @@ public class AnalysisConfig implements ToXContentObject {
             return this;
         }
 
+        public Builder setPerPartitionCategorizationConfig(PerPartitionCategorizationConfig perPartitionCategorizationConfig) {
+            this.perPartitionCategorizationConfig = perPartitionCategorizationConfig;
+            return this;
+        }
+
         public Builder setSummaryCountFieldName(String summaryCountFieldName) {
             this.summaryCountFieldName = summaryCountFieldName;
             return this;
@@ -388,16 +368,6 @@ public class AnalysisConfig implements ToXContentObject {
 
         public Builder setInfluencers(List<String> influencers) {
             this.influencers = Objects.requireNonNull(influencers, INFLUENCERS.getPreferredName());
-            return this;
-        }
-
-        public Builder setOverlappingBuckets(Boolean overlappingBuckets) {
-            this.overlappingBuckets = overlappingBuckets;
-            return this;
-        }
-
-        public Builder setResultFinalizationWindow(Long resultFinalizationWindow) {
-            this.resultFinalizationWindow = resultFinalizationWindow;
             return this;
         }
 
@@ -409,8 +379,7 @@ public class AnalysisConfig implements ToXContentObject {
         public AnalysisConfig build() {
 
             return new AnalysisConfig(bucketSpan, categorizationFieldName, categorizationFilters, categorizationAnalyzerConfig,
-                latency, summaryCountFieldName, detectors, influencers, overlappingBuckets,
-                resultFinalizationWindow, multivariateByFields);
+                perPartitionCategorizationConfig, latency, summaryCountFieldName, detectors, influencers, multivariateByFields);
         }
     }
 }

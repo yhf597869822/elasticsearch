@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.index.query;
@@ -25,7 +14,6 @@ import org.elasticsearch.common.ParsingException;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
-import org.elasticsearch.search.internal.SearchContext;
 import org.elasticsearch.test.AbstractQueryTestCase;
 
 import java.io.IOException;
@@ -56,11 +44,11 @@ public class SpanNotQueryBuilderTests extends AbstractQueryTestCase<SpanNotQuery
     }
 
     @Override
-    protected void doAssertLuceneQuery(SpanNotQueryBuilder queryBuilder, Query query, SearchContext context) throws IOException {
+    protected void doAssertLuceneQuery(SpanNotQueryBuilder queryBuilder, Query query, SearchExecutionContext context) throws IOException {
         assertThat(query, instanceOf(SpanNotQuery.class));
         SpanNotQuery spanNotQuery = (SpanNotQuery) query;
-        assertThat(spanNotQuery.getExclude(), equalTo(queryBuilder.excludeQuery().toQuery(context.getQueryShardContext())));
-        assertThat(spanNotQuery.getInclude(), equalTo(queryBuilder.includeQuery().toQuery(context.getQueryShardContext())));
+        assertThat(spanNotQuery.getExclude(), equalTo(queryBuilder.excludeQuery().toQuery(context)));
+        assertThat(spanNotQuery.getInclude(), equalTo(queryBuilder.includeQuery().toQuery(context)));
     }
 
     public void testIllegalArgument() {
@@ -70,7 +58,8 @@ public class SpanNotQueryBuilderTests extends AbstractQueryTestCase<SpanNotQuery
     }
 
     public void testDist() {
-        SpanNotQueryBuilder builder = new SpanNotQueryBuilder(new SpanTermQueryBuilder("name1", "value1"), new SpanTermQueryBuilder("name2", "value2"));
+        SpanNotQueryBuilder builder = new SpanNotQueryBuilder(new SpanTermQueryBuilder("name1", "value1"),
+            new SpanTermQueryBuilder("name2", "value2"));
         assertThat(builder.pre(), equalTo(0));
         assertThat(builder.post(), equalTo(0));
         builder.dist(-4);
@@ -82,7 +71,8 @@ public class SpanNotQueryBuilderTests extends AbstractQueryTestCase<SpanNotQuery
     }
 
     public void testPrePost() {
-        SpanNotQueryBuilder builder = new SpanNotQueryBuilder(new SpanTermQueryBuilder("name1", "value1"), new SpanTermQueryBuilder("name2", "value2"));
+        SpanNotQueryBuilder builder = new SpanNotQueryBuilder(new SpanTermQueryBuilder("name1", "value1"),
+            new SpanTermQueryBuilder("name2", "value2"));
         assertThat(builder.pre(), equalTo(0));
         assertThat(builder.post(), equalTo(0));
         builder.pre(-4).post(-4);
@@ -130,7 +120,7 @@ public class SpanNotQueryBuilderTests extends AbstractQueryTestCase<SpanNotQuery
             builder.endObject();
 
             ParsingException e = expectThrows(ParsingException.class, () -> parseQuery(Strings.toString(builder)));
-            assertThat(e.getDetailedMessage(), containsString("spanNot must have [include]"));
+            assertThat(e.getDetailedMessage(), containsString("span_not must have [include]"));
         }
         {
             XContentBuilder builder = XContentFactory.jsonBuilder();
@@ -144,7 +134,7 @@ public class SpanNotQueryBuilderTests extends AbstractQueryTestCase<SpanNotQuery
             builder.endObject();
 
             ParsingException e = expectThrows(ParsingException.class, () -> parseQuery(Strings.toString(builder)));
-            assertThat(e.getDetailedMessage(), containsString("spanNot must have [exclude]"));
+            assertThat(e.getDetailedMessage(), containsString("span_not must have [exclude]"));
         }
         {
             XContentBuilder builder = XContentFactory.jsonBuilder();
@@ -161,7 +151,7 @@ public class SpanNotQueryBuilderTests extends AbstractQueryTestCase<SpanNotQuery
             builder.endObject();
 
             ParsingException e = expectThrows(ParsingException.class, () -> parseQuery(Strings.toString(builder)));
-            assertThat(e.getDetailedMessage(), containsString("spanNot can either use [dist] or [pre] & [post] (or none)"));
+            assertThat(e.getDetailedMessage(), containsString("span_not can either use [dist] or [pre] & [post] (or none)"));
         }
     }
 
@@ -201,7 +191,7 @@ public class SpanNotQueryBuilderTests extends AbstractQueryTestCase<SpanNotQuery
                 "    },\n" +
                 "    \"pre\" : 0,\n" +
                 "    \"post\" : 0,\n" +
-                "    \"boost\" : 1.0\n" +
+                "    \"boost\" : 2.0\n" +
                 "  }\n" +
                 "}";
 
@@ -210,5 +200,97 @@ public class SpanNotQueryBuilderTests extends AbstractQueryTestCase<SpanNotQuery
 
         assertEquals(json, "hoya", ((SpanTermQueryBuilder) parsed.includeQuery()).value());
         assertEquals(json, 2, ((SpanNearQueryBuilder) parsed.excludeQuery()).clauses().size());
+        assertEquals(json, 2.0, parsed.boost(), 0.0);
+    }
+
+    public void testFromJsonWithNonDefaultBoostInIncludeQuery() {
+        String json =
+                "{\n" +
+                "  \"span_not\" : {\n" +
+                "    \"exclude\" : {\n" +
+                "      \"span_term\" : {\n" +
+                "        \"field1\" : {\n" +
+                "          \"value\" : \"hoya\",\n" +
+                "          \"boost\" : 1.0\n" +
+                "        }\n" +
+                "      }\n" +
+                "    },\n" +
+                "    \"include\" : {\n" +
+                "      \"span_near\" : {\n" +
+                "        \"clauses\" : [ {\n" +
+                "          \"span_term\" : {\n" +
+                "            \"field1\" : {\n" +
+                "              \"value\" : \"la\",\n" +
+                "              \"boost\" : 1.0\n" +
+                "            }\n" +
+                "          }\n" +
+                "        }, {\n" +
+                "          \"span_term\" : {\n" +
+                "            \"field1\" : {\n" +
+                "              \"value\" : \"hoya\",\n" +
+                "              \"boost\" : 1.0\n" +
+                "            }\n" +
+                "          }\n" +
+                "        } ],\n" +
+                "        \"slop\" : 0,\n" +
+                "        \"in_order\" : true,\n" +
+                "        \"boost\" : 2.0\n" +
+                "      }\n" +
+                "    },\n" +
+                "    \"pre\" : 0,\n" +
+                "    \"post\" : 0,\n" +
+                "    \"boost\" : 1.0\n" +
+                "  }\n" +
+                "}";
+
+        Exception exception = expectThrows(ParsingException.class, () -> parseQuery(json));
+        assertThat(exception.getMessage(),
+            equalTo("span_not [include] as a nested span clause can't have non-default boost value [2.0]"));
+    }
+
+
+    public void testFromJsonWithNonDefaultBoostInExcludeQuery() {
+        String json =
+                "{\n" +
+                "  \"span_not\" : {\n" +
+                "    \"include\" : {\n" +
+                "      \"span_term\" : {\n" +
+                "        \"field1\" : {\n" +
+                "          \"value\" : \"hoya\",\n" +
+                "          \"boost\" : 1.0\n" +
+                "        }\n" +
+                "      }\n" +
+                "    },\n" +
+                "    \"exclude\" : {\n" +
+                "      \"span_near\" : {\n" +
+                "        \"clauses\" : [ {\n" +
+                "          \"span_term\" : {\n" +
+                "            \"field1\" : {\n" +
+                "              \"value\" : \"la\",\n" +
+                "              \"boost\" : 1.0\n" +
+                "            }\n" +
+                "          }\n" +
+                "        }, {\n" +
+                "          \"span_term\" : {\n" +
+                "            \"field1\" : {\n" +
+                "              \"value\" : \"hoya\",\n" +
+                "              \"boost\" : 1.0\n" +
+                "            }\n" +
+                "          }\n" +
+                "        } ],\n" +
+                "        \"slop\" : 0,\n" +
+                "        \"in_order\" : true,\n" +
+                "        \"boost\" : 2.0\n" +
+                "      }\n" +
+                "    },\n" +
+                "    \"pre\" : 0,\n" +
+                "    \"post\" : 0,\n" +
+                "    \"boost\" : 1.0\n" +
+                "  }\n" +
+                "}";
+
+        Exception exception = expectThrows(ParsingException.class, () -> parseQuery(json));
+        assertThat(exception.getMessage(),
+            equalTo("span_not [exclude] as a nested span clause can't have non-default boost value [2.0]"));
     }
 }

@@ -1,16 +1,15 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.ml.rest.job;
 
 import org.elasticsearch.client.node.NodeClient;
-import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.rest.BaseRestHandler;
 import org.elasticsearch.rest.BytesRestResponse;
-import org.elasticsearch.rest.RestController;
 import org.elasticsearch.rest.RestRequest;
 import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.rest.action.RestToXContentListener;
@@ -19,21 +18,25 @@ import org.elasticsearch.tasks.TaskListener;
 import org.elasticsearch.xpack.core.ml.action.CloseJobAction;
 import org.elasticsearch.xpack.core.ml.action.DeleteJobAction;
 import org.elasticsearch.xpack.core.ml.job.config.Job;
-import org.elasticsearch.xpack.ml.MachineLearning;
 
 import java.io.IOException;
+import java.util.List;
+
+import static org.elasticsearch.rest.RestRequest.Method.DELETE;
+import static org.elasticsearch.xpack.ml.MachineLearning.BASE_PATH;
 
 public class RestDeleteJobAction extends BaseRestHandler {
 
-    public RestDeleteJobAction(Settings settings, RestController controller) {
-        super(settings);
-        controller.registerHandler(RestRequest.Method.DELETE, MachineLearning.BASE_PATH
-                + "anomaly_detectors/{" + Job.ID.getPreferredName() + "}", this);
+    @Override
+    public List<Route> routes() {
+        return List.of(
+            new Route(DELETE, BASE_PATH + "anomaly_detectors/{" + Job.ID + "}")
+        );
     }
 
     @Override
     public String getName() {
-        return "xpack_ml_delete_job_action";
+        return "ml_delete_job_action";
     }
 
     @Override
@@ -64,13 +67,13 @@ public class RestDeleteJobAction extends BaseRestHandler {
     // We do not want to log anything due to a delete action
     // The response or error will be returned to the client when called synchronously
     // or it will be stored in the task result when called asynchronously
-    private static TaskListener nullTaskListener() {
-        return new TaskListener() {
+    private static <T> TaskListener<T> nullTaskListener() {
+        return new TaskListener<T>() {
             @Override
-            public void onResponse(Task task, Object o) {}
+            public void onResponse(Task task, T o) {}
 
             @Override
-            public void onFailure(Task task, Throwable e) {}
+            public void onFailure(Task task, Exception e) {}
         };
     }
 }

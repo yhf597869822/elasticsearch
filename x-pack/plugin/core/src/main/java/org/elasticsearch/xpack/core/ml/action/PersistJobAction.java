@@ -1,14 +1,13 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.core.ml.action;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.action.ActionRequestBuilder;
+import org.elasticsearch.action.ActionType;
 import org.elasticsearch.action.support.tasks.BaseTasksResponse;
-import org.elasticsearch.client.ElasticsearchClient;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
@@ -16,23 +15,28 @@ import org.elasticsearch.common.io.stream.Writeable;
 import java.io.IOException;
 import java.util.Objects;
 
-public class PersistJobAction extends Action<PersistJobAction.Response> {
+public class PersistJobAction extends ActionType<PersistJobAction.Response> {
 
     public static final PersistJobAction INSTANCE = new PersistJobAction();
     public static final String NAME = "cluster:admin/xpack/ml/job/persist";
 
     private PersistJobAction() {
-        super(NAME);
-    }
-
-    @Override
-    public Response newResponse() {
-        return new Response();
+        super(NAME, PersistJobAction.Response::new);
     }
 
     public static class Request extends JobTaskRequest<PersistJobAction.Request> {
 
-        public Request() {
+        public Request(StreamInput in) throws IOException {
+            super(in);
+            // isBackground for fwc
+            in.readBoolean();
+        }
+
+        @Override
+        public void writeTo(StreamOutput out) throws IOException {
+            super.writeTo(out);
+            // isBackground for fwc
+            out.writeBoolean(true);
         }
 
         public Request(String jobId) {
@@ -44,21 +48,7 @@ public class PersistJobAction extends Action<PersistJobAction.Response> {
         }
 
         public boolean isForeground() {
-            return !isBackGround();
-        }
-
-        @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
-            // isBackground for fwc
-            in.readBoolean();
-        }
-
-        @Override
-        public void writeTo(StreamOutput out) throws IOException {
-            super.writeTo(out);
-            // isBackground for fwc
-            out.writeBoolean(true);
+            return isBackGround() == false;
         }
 
         @Override
@@ -81,24 +71,15 @@ public class PersistJobAction extends Action<PersistJobAction.Response> {
 
     public static class Response extends BaseTasksResponse implements Writeable {
 
-        boolean persisted;
-
-        public Response() {
-            super(null, null);
-        }
+        private final boolean persisted;
 
         public Response(boolean persisted) {
             super(null, null);
             this.persisted = persisted;
         }
 
-        public boolean isPersisted() {
-            return persisted;
-        }
-
-        @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
+        public Response(StreamInput in) throws IOException {
+            super(in);
             persisted = in.readBoolean();
         }
 
@@ -106,6 +87,10 @@ public class PersistJobAction extends Action<PersistJobAction.Response> {
         public void writeTo(StreamOutput out) throws IOException {
             super.writeTo(out);
             out.writeBoolean(persisted);
+        }
+
+        public boolean isPersisted() {
+            return persisted;
         }
 
         @Override
@@ -122,9 +107,4 @@ public class PersistJobAction extends Action<PersistJobAction.Response> {
         }
     }
 
-    static class RequestBuilder extends ActionRequestBuilder<Request, Response> {
-        RequestBuilder(ElasticsearchClient client, PersistJobAction action) {
-            super(client, action, new PersistJobAction.Request());
-        }
-    }
 }

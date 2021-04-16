@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 package org.elasticsearch.client.license;
 
@@ -23,7 +12,6 @@ import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.xcontent.ConstructingObjectParser;
 import org.elasticsearch.common.xcontent.XContentParseException;
 import org.elasticsearch.common.xcontent.XContentParser;
-import org.elasticsearch.rest.RestStatus;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -68,7 +56,7 @@ public class StartBasicResponse {
                             throw new XContentParseException(parser.getTokenLocation(), "expected message header or acknowledgement");
                         }
                         if (new ParseField("message").getPreferredName().equals(currentFieldName)) {
-                            ensureExpectedToken(XContentParser.Token.VALUE_STRING, token, parser::getTokenLocation);
+                            ensureExpectedToken(XContentParser.Token.VALUE_STRING, token, parser);
                             message = parser.text();
                         } else {
                             if (token != XContentParser.Token.START_ARRAY) {
@@ -76,7 +64,7 @@ public class StartBasicResponse {
                             }
                             List<String> acknowledgeMessagesList = new ArrayList<>();
                             while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
-                                ensureExpectedToken(XContentParser.Token.VALUE_STRING, token, parser::getTokenLocation);
+                                ensureExpectedToken(XContentParser.Token.VALUE_STRING, token, parser);
                                 acknowledgeMessagesList.add(parser.text());
                             }
                             acknowledgeMessages.put(currentFieldName, acknowledgeMessagesList.toArray(new String[0]));
@@ -91,26 +79,16 @@ public class StartBasicResponse {
     private String acknowledgeMessage;
 
     public enum Status {
-        GENERATED_BASIC(true, null, RestStatus.OK),
-        ALREADY_USING_BASIC(false, "Operation failed: Current license is basic.", RestStatus.FORBIDDEN),
-        NEED_ACKNOWLEDGEMENT(false, "Operation failed: Needs acknowledgement.", RestStatus.OK);
+        GENERATED_BASIC(true, null),
+        ALREADY_USING_BASIC(false, "Operation failed: Current license is basic."),
+        NEED_ACKNOWLEDGEMENT(false, "Operation failed: Needs acknowledgement.");
 
         private final boolean isBasicStarted;
         private final String errorMessage;
-        private final RestStatus restStatus;
 
-        Status(boolean isBasicStarted, String errorMessage, RestStatus restStatus) {
+        Status(boolean isBasicStarted, String errorMessage) {
             this.isBasicStarted = isBasicStarted;
             this.errorMessage = errorMessage;
-            this.restStatus = restStatus;
-        }
-
-        String getErrorMessage() {
-            return errorMessage;
-        }
-
-        boolean isBasicStarted() {
-            return isBasicStarted;
         }
 
         static StartBasicResponse.Status fromErrorMessage(final String errorMessage) {
@@ -126,14 +104,11 @@ public class StartBasicResponse {
 
     private StartBasicResponse.Status status;
 
-    public StartBasicResponse() {
-    }
-
-    StartBasicResponse(StartBasicResponse.Status status) {
+    private StartBasicResponse(StartBasicResponse.Status status) {
         this(status, Collections.emptyMap(), null);
     }
 
-    StartBasicResponse(StartBasicResponse.Status status,
+    private StartBasicResponse(StartBasicResponse.Status status,
                               Map<String, String[]> acknowledgeMessages, String acknowledgeMessage) {
         this.status = status;
         this.acknowledgeMessages = acknowledgeMessages;
@@ -167,5 +142,4 @@ public class StartBasicResponse {
     public static StartBasicResponse fromXContent(XContentParser parser) throws IOException {
         return PARSER.parse(parser, null);
     }
-
 }

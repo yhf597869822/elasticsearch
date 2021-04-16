@@ -1,12 +1,14 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.core.ml.job.config;
 
 import com.carrotsearch.randomizedtesting.generators.CodepointSetGenerator;
 import org.elasticsearch.ElasticsearchStatusException;
+import org.elasticsearch.ResourceAlreadyExistsException;
 import org.elasticsearch.Version;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.stream.Writeable;
@@ -80,7 +82,7 @@ public class JobTests extends AbstractSerializingTestCase<Job> {
                 .createParser(NamedXContentRegistry.EMPTY, DeprecationHandler.THROW_UNSUPPORTED_OPERATION, FUTURE_JOB);
         XContentParseException e = expectThrows(XContentParseException.class,
                 () -> Job.STRICT_PARSER.apply(parser, null).build());
-        assertEquals("[4:5] [job_details] unknown field [tomorrows_technology_today], parser not found", e.getMessage());
+        assertEquals("[4:5] [job_details] unknown field [tomorrows_technology_today]", e.getMessage());
     }
 
     public void testFutureMetadataParse() throws IOException {
@@ -104,10 +106,12 @@ public class JobTests extends AbstractSerializingTestCase<Job> {
         assertNull(job.getModelPlotConfig());
         assertNull(job.getRenormalizationWindowDays());
         assertNull(job.getBackgroundPersistInterval());
-        assertThat(job.getModelSnapshotRetentionDays(), equalTo(1L));
+        assertThat(job.getModelSnapshotRetentionDays(), equalTo(10L));
+        assertNull(job.getDailyModelSnapshotRetentionAfterDays());
         assertNull(job.getResultsRetentionDays());
         assertNotNull(job.allInputFields());
         assertFalse(job.allInputFields().isEmpty());
+        assertFalse(job.allowLazyOpen());
     }
 
     public void testNoId() {
@@ -165,7 +169,7 @@ public class JobTests extends AbstractSerializingTestCase<Job> {
         Job job1 = builder.build();
         builder.setId("bar");
         Job job2 = builder.build();
-        assertFalse(job1.equals(job2));
+        assertNotEquals(job1, job2);
     }
 
     public void testEquals_GivenDifferentRenormalizationWindowDays() {
@@ -180,7 +184,7 @@ public class JobTests extends AbstractSerializingTestCase<Job> {
         jobDetails2.setRenormalizationWindowDays(4L);
         jobDetails2.setAnalysisConfig(createAnalysisConfig());
         jobDetails2.setCreateTime(date);
-        assertFalse(jobDetails1.build().equals(jobDetails2.build()));
+        assertNotEquals(jobDetails1.build(), jobDetails2.build());
     }
 
     public void testEquals_GivenDifferentBackgroundPersistInterval() {
@@ -195,7 +199,7 @@ public class JobTests extends AbstractSerializingTestCase<Job> {
         jobDetails2.setBackgroundPersistInterval(TimeValue.timeValueSeconds(8000L));
         jobDetails2.setAnalysisConfig(createAnalysisConfig());
         jobDetails2.setCreateTime(date);
-        assertFalse(jobDetails1.build().equals(jobDetails2.build()));
+        assertNotEquals(jobDetails1.build(), jobDetails2.build());
     }
 
     public void testEquals_GivenDifferentModelSnapshotRetentionDays() {
@@ -210,7 +214,7 @@ public class JobTests extends AbstractSerializingTestCase<Job> {
         jobDetails2.setModelSnapshotRetentionDays(8L);
         jobDetails2.setAnalysisConfig(createAnalysisConfig());
         jobDetails2.setCreateTime(date);
-        assertFalse(jobDetails1.build().equals(jobDetails2.build()));
+        assertNotEquals(jobDetails1.build(), jobDetails2.build());
     }
 
     public void testEquals_GivenDifferentResultsRetentionDays() {
@@ -225,7 +229,7 @@ public class JobTests extends AbstractSerializingTestCase<Job> {
         jobDetails2.setResultsRetentionDays(4L);
         jobDetails2.setAnalysisConfig(createAnalysisConfig());
         jobDetails2.setCreateTime(date);
-        assertFalse(jobDetails1.build().equals(jobDetails2.build()));
+        assertNotEquals(jobDetails1.build(), jobDetails2.build());
     }
 
     public void testEquals_GivenDifferentCustomSettings() {
@@ -237,7 +241,7 @@ public class JobTests extends AbstractSerializingTestCase<Job> {
         Map<String, Object> customSettings2 = new HashMap<>();
         customSettings2.put("key2", "value2");
         jobDetails2.setCustomSettings(customSettings2);
-        assertFalse(jobDetails1.build().equals(jobDetails2.build()));
+        assertNotEquals(jobDetails1.build(), jobDetails2.build());
     }
 
     // JobConfigurationTests:
@@ -394,6 +398,30 @@ public class JobTests extends AbstractSerializingTestCase<Job> {
         assertEquals(errorMessage, e.getMessage());
     }
 
+    public void testVerify_GivenNegativeDailyModelSnapshotRetentionAfterDays() {
+        String errorMessage =
+            Messages.getMessage(Messages.JOB_CONFIG_FIELD_VALUE_TOO_LOW, "daily_model_snapshot_retention_after_days", 0, -1);
+        Job.Builder builder = buildJobBuilder("foo");
+        builder.setDailyModelSnapshotRetentionAfterDays(-1L);
+        IllegalArgumentException e = expectThrows(IllegalArgumentException.class, builder::build);
+
+        assertEquals(errorMessage, e.getMessage());
+    }
+
+    public void testVerify_GivenInconsistentModelSnapshotRetentionSettings() {
+        long dailyModelSnapshotRetentionAfterDays = randomLongBetween(1, Long.MAX_VALUE);
+        long modelSnapshotRetentionDays = randomLongBetween(0, dailyModelSnapshotRetentionAfterDays - 1);
+        String errorMessage =
+            Messages.getMessage(Messages.JOB_CONFIG_MODEL_SNAPSHOT_RETENTION_SETTINGS_INCONSISTENT,
+                dailyModelSnapshotRetentionAfterDays, modelSnapshotRetentionDays);
+        Job.Builder builder = buildJobBuilder("foo");
+        builder.setDailyModelSnapshotRetentionAfterDays(dailyModelSnapshotRetentionAfterDays);
+        builder.setModelSnapshotRetentionDays(modelSnapshotRetentionDays);
+        IllegalArgumentException e = expectThrows(IllegalArgumentException.class, builder::build);
+
+        assertEquals(errorMessage, e.getMessage());
+    }
+
     public void testVerify_GivenLowBackgroundPersistInterval() {
         String errorMessage = Messages.getMessage(Messages.JOB_CONFIG_FIELD_VALUE_TOO_LOW, "background_persist_interval", 3600, 3599);
         Job.Builder builder = buildJobBuilder("foo");
@@ -415,14 +443,14 @@ public class JobTests extends AbstractSerializingTestCase<Job> {
         Job.Builder builder = buildJobBuilder("foo");
         Job job = builder.build();
         assertEquals(AnomalyDetectorsIndexFields.RESULTS_INDEX_PREFIX + AnomalyDetectorsIndexFields.RESULTS_INDEX_DEFAULT,
-                job.getResultsIndexName());
+                job.getInitialResultsIndexName());
     }
 
     public void testBuilder_setsIndexName() {
         Job.Builder builder = buildJobBuilder("foo");
         builder.setResultsIndexName("carol");
         Job job = builder.build();
-        assertEquals(AnomalyDetectorsIndexFields.RESULTS_INDEX_PREFIX + "custom-carol", job.getResultsIndexName());
+        assertEquals(AnomalyDetectorsIndexFields.RESULTS_INDEX_PREFIX + "custom-carol", job.getInitialResultsIndexName());
     }
 
     public void testBuilder_withInvalidIndexNameThrows() {
@@ -435,10 +463,9 @@ public class JobTests extends AbstractSerializingTestCase<Job> {
     public void testBuilder_buildWithCreateTime() {
         Job.Builder builder = buildJobBuilder("foo");
         Date now = new Date();
-        Job job = builder.setEstablishedModelMemory(randomNonNegativeLong()).build(now);
+        Job job = builder.build(now);
         assertEquals(now, job.getCreateTime());
         assertEquals(Version.CURRENT, job.getJobVersion());
-        assertNull(job.getEstablishedModelMemory());
     }
 
     public void testJobWithoutVersion() throws IOException {
@@ -506,37 +533,25 @@ public class JobTests extends AbstractSerializingTestCase<Job> {
         assertThat(e.getMessage(), containsString("Invalid group id '$$$'"));
     }
 
-    public void testEstimateMemoryFootprint_GivenEstablished() {
-        Job.Builder builder = buildJobBuilder("established");
-        long establishedModelMemory = randomIntBetween(10_000, 2_000_000_000);
-        builder.setEstablishedModelMemory(establishedModelMemory);
-        if (randomBoolean()) {
-            builder.setAnalysisLimits(new AnalysisLimits(randomNonNegativeLong(), null));
-        }
-        assertEquals(establishedModelMemory + Job.PROCESS_MEMORY_OVERHEAD.getBytes(), builder.build().estimateMemoryFootprint());
+    public void testInvalidGroup_matchesJobId() {
+        Job.Builder builder = buildJobBuilder("foo");
+        builder.setGroups(Collections.singletonList("foo"));
+        ResourceAlreadyExistsException e = expectThrows(ResourceAlreadyExistsException.class, builder::build);
+        assertEquals(e.getMessage(), "job and group names must be unique but job [foo] and group [foo] have the same name");
     }
 
-    public void testEstimateMemoryFootprint_GivenLimitAndNotEstablished() {
-        Job.Builder builder = buildJobBuilder("limit");
-        if (rarely()) {
-            // An "established" model memory of 0 means "not established".  Generally this won't be set, so getEstablishedModelMemory()
-            // will return null, but if it returns 0 we shouldn't estimate the job's memory requirement to be 0.
-            builder.setEstablishedModelMemory(0L);
-        }
-        ByteSizeValue limit = new ByteSizeValue(randomIntBetween(100, 10000), ByteSizeUnit.MB);
-        builder.setAnalysisLimits(new AnalysisLimits(limit.getMb(), null));
-        assertEquals(limit.getBytes() + Job.PROCESS_MEMORY_OVERHEAD.getBytes(), builder.build().estimateMemoryFootprint());
-    }
+    public void testInvalidAnalysisConfig_duplicateDetectors() throws Exception {
+        Job.Builder builder =
+            new Job.Builder("job_with_duplicate_detectors")
+                .setCreateTime(new Date())
+                .setDataDescription(new DataDescription.Builder())
+                .setAnalysisConfig(new AnalysisConfig.Builder(Arrays.asList(
+                    new Detector.Builder("mean", "responsetime").build(),
+                    new Detector.Builder("mean", "responsetime").build()
+                )));
 
-    public void testEstimateMemoryFootprint_GivenNoLimitAndNotEstablished() {
-        Job.Builder builder = buildJobBuilder("nolimit");
-        if (rarely()) {
-            // An "established" model memory of 0 means "not established".  Generally this won't be set, so getEstablishedModelMemory()
-            // will return null, but if it returns 0 we shouldn't estimate the job's memory requirement to be 0.
-            builder.setEstablishedModelMemory(0L);
-        }
-        assertEquals(ByteSizeUnit.MB.toBytes(AnalysisLimits.PRE_6_1_DEFAULT_MODEL_MEMORY_LIMIT_MB)
-                        + Job.PROCESS_MEMORY_OVERHEAD.getBytes(), builder.build().estimateMemoryFootprint());
+        IllegalArgumentException e = expectThrows(IllegalArgumentException.class, builder::validateDetectorsAreUnique);
+        assertThat(e.getMessage(), containsString("Duplicate detectors are not allowed: [mean(responsetime)]"));
     }
 
     public void testEarliestValidTimestamp_GivenEmptyDataCounts() {
@@ -561,6 +576,22 @@ public class JobTests extends AbstractSerializingTestCase<Job> {
         dataCounts.setLatestRecordTimeStamp(new Date(123456789L));
 
         assertThat(builder.build().earliestValidTimestamp(dataCounts), equalTo(123455789L));
+    }
+
+    public void testCopyingJobDoesNotCauseStackOverflow() {
+        Job job = createRandomizedJob();
+        for (int i = 0; i < 100000; i++) {
+            job = new Job.Builder(job).build();
+        }
+    }
+
+    public void testDocumentId() {
+        String jobFoo = "foo";
+        assertEquals("anomaly_detector-" + jobFoo, Job.documentId(jobFoo));
+        assertEquals(jobFoo, Job.extractJobIdFromDocumentId(
+            Job.documentId(jobFoo)
+        ));
+        assertNull(Job.extractJobIdFromDocumentId("some_other_type-foo"));
     }
 
     public static Job.Builder buildJobBuilder(String id, Date date) {
@@ -610,9 +641,6 @@ public class JobTests extends AbstractSerializingTestCase<Job> {
         if (randomBoolean()) {
             builder.setFinishedTime(new Date(randomNonNegativeLong()));
         }
-        if (randomBoolean()) {
-            builder.setEstablishedModelMemory(randomNonNegativeLong());
-        }
         builder.setAnalysisConfig(AnalysisConfigTests.createRandomized());
         builder.setAnalysisLimits(AnalysisLimits.validateAndSetDefaults(AnalysisLimitsTests.createRandomized(), null,
                 AnalysisLimits.DEFAULT_MODEL_MEMORY_LIMIT_MB));
@@ -622,7 +650,7 @@ public class JobTests extends AbstractSerializingTestCase<Job> {
         builder.setDataDescription(dataDescription);
 
         if (randomBoolean()) {
-            builder.setModelPlotConfig(new ModelPlotConfig(randomBoolean(), randomAlphaOfLength(10)));
+            builder.setModelPlotConfig(ModelPlotConfigTests.createRandomized());
         }
         if (randomBoolean()) {
             builder.setRenormalizationWindowDays(randomNonNegativeLong());
@@ -632,6 +660,13 @@ public class JobTests extends AbstractSerializingTestCase<Job> {
         }
         if (randomBoolean()) {
             builder.setModelSnapshotRetentionDays(randomNonNegativeLong());
+        }
+        if (randomBoolean()) {
+            if (builder.getModelSnapshotRetentionDays() != null) {
+                builder.setDailyModelSnapshotRetentionAfterDays(randomLongBetween(0, builder.getModelSnapshotRetentionDays()));
+            } else {
+                builder.setDailyModelSnapshotRetentionAfterDays(randomNonNegativeLong());
+            }
         }
         if (randomBoolean()) {
             builder.setResultsRetentionDays(randomNonNegativeLong());
@@ -647,6 +682,9 @@ public class JobTests extends AbstractSerializingTestCase<Job> {
         }
         if (randomBoolean()) {
             builder.setResultsIndexName(randomValidJobId());
+        }
+        if (randomBoolean()) {
+            builder.setAllowLazyOpen(randomBoolean());
         }
         return builder.build();
     }

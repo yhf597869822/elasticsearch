@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.core.ml.job.config;
 
@@ -282,6 +283,7 @@ public class DataDescriptionTests extends AbstractSerializingTestCase<DataDescri
         return DataDescription.STRICT_PARSER.apply(parser, null).build();
     }
 
+    @Override
     protected DataDescription mutateInstance(DataDescription instance) throws java.io.IOException {
         DataFormat format = instance.getFormat();
         String timeField = instance.getTimeField();
@@ -320,5 +322,5 @@ public class DataDescriptionTests extends AbstractSerializingTestCase<DataDescri
             throw new AssertionError("Illegal randomisation branch");
         }
         return new DataDescription(format, timeField, timeFormat, delimiter, quoteChar);
-    };
+    }
 }

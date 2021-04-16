@@ -1,9 +1,9 @@
 --
 :api: ccr-pause-follow
 :request: PauseFollowRequest
-:response: PauseFollowResponse
+:response: AcknowledgedResponse
 --
-
+[role="xpack"]
 [id="{upid}-{api}"]
 === Pause Follow API
 

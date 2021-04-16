@@ -1,46 +1,44 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.ml.rest.results;
 
 import org.elasticsearch.client.node.NodeClient;
 import org.elasticsearch.common.Strings;
-import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.rest.BaseRestHandler;
-import org.elasticsearch.rest.RestController;
 import org.elasticsearch.rest.RestRequest;
 import org.elasticsearch.rest.action.RestToXContentListener;
-import org.elasticsearch.xpack.ml.MachineLearning;
+import org.elasticsearch.xpack.core.action.util.PageParams;
 import org.elasticsearch.xpack.core.ml.action.GetBucketsAction;
-import org.elasticsearch.xpack.core.ml.action.util.PageParams;
 import org.elasticsearch.xpack.core.ml.job.config.Job;
 import org.elasticsearch.xpack.core.ml.job.results.Result;
 
 import java.io.IOException;
+import java.util.List;
+
+import static org.elasticsearch.rest.RestRequest.Method.GET;
+import static org.elasticsearch.rest.RestRequest.Method.POST;
+import static org.elasticsearch.xpack.ml.MachineLearning.BASE_PATH;
 
 public class RestGetBucketsAction extends BaseRestHandler {
 
-    public RestGetBucketsAction(Settings settings, RestController controller) {
-        super(settings);
-        controller.registerHandler(RestRequest.Method.GET,
-                MachineLearning.BASE_PATH + "anomaly_detectors/{" + Job.ID.getPreferredName()
-                        + "}/results/buckets/{" + Result.TIMESTAMP.getPreferredName() + "}", this);
-        controller.registerHandler(RestRequest.Method.POST,
-                MachineLearning.BASE_PATH + "anomaly_detectors/{" + Job.ID.getPreferredName()
-                        + "}/results/buckets/{" + Result.TIMESTAMP.getPreferredName() + "}", this);
-
-        controller.registerHandler(RestRequest.Method.GET,
-                MachineLearning.BASE_PATH + "anomaly_detectors/{" + Job.ID.getPreferredName() + "}/results/buckets", this);
-        controller.registerHandler(RestRequest.Method.POST,
-                MachineLearning.BASE_PATH + "anomaly_detectors/{" + Job.ID.getPreferredName() + "}/results/buckets", this);
+    @Override
+    public List<Route> routes() {
+        return List.of(
+            new Route(GET, BASE_PATH + "anomaly_detectors/{" + Job.ID + "}/results/buckets/{" + Result.TIMESTAMP + "}"),
+            new Route(POST, BASE_PATH + "anomaly_detectors/{" + Job.ID + "}/results/buckets/{" + Result.TIMESTAMP + "}"),
+            new Route(GET, BASE_PATH + "anomaly_detectors/{" + Job.ID + "}/results/buckets"),
+            new Route(POST, BASE_PATH + "anomaly_detectors/{" + Job.ID + "}/results/buckets")
+        );
     }
 
     @Override
     public String getName() {
-        return "xpack_ml_get_buckets_action";
+        return "ml_get_buckets_action";
     }
 
     @Override
@@ -53,7 +51,7 @@ public class RestGetBucketsAction extends BaseRestHandler {
             request = GetBucketsAction.Request.parseRequest(jobId, parser);
 
             // A timestamp in the URL overrides any timestamp that may also have been set in the body
-            if (!Strings.isNullOrEmpty(timestamp)) {
+            if (Strings.isNullOrEmpty(timestamp) == false) {
                 request.setTimestamp(timestamp);
             }
         } else {
@@ -61,7 +59,7 @@ public class RestGetBucketsAction extends BaseRestHandler {
 
             // Check if the REST param is set first so mutually exclusive
             // options will cause an error if set
-            if (!Strings.isNullOrEmpty(timestamp)) {
+            if (Strings.isNullOrEmpty(timestamp) == false) {
                 request.setTimestamp(timestamp);
             }
             // multiple bucket options

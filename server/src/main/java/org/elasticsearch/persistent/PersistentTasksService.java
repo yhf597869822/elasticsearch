@@ -1,61 +1,50 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 package org.elasticsearch.persistent;
 
-import org.elasticsearch.action.Action;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.elasticsearch.action.ActionType;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.action.admin.cluster.node.tasks.cancel.CancelTasksRequest;
 import org.elasticsearch.action.admin.cluster.node.tasks.cancel.CancelTasksResponse;
-import org.elasticsearch.action.support.ContextPreservingActionListener;
 import org.elasticsearch.client.Client;
+import org.elasticsearch.client.OriginSettingClient;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.ClusterStateObserver;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.Nullable;
-import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.unit.TimeValue;
-import org.elasticsearch.common.util.concurrent.ThreadContext;
 import org.elasticsearch.node.NodeClosedException;
-import org.elasticsearch.persistent.PersistentTasksCustomMetaData.PersistentTask;
+import org.elasticsearch.persistent.PersistentTasksCustomMetadata.PersistentTask;
 import org.elasticsearch.tasks.TaskId;
 import org.elasticsearch.threadpool.ThreadPool;
 
 import java.util.function.Predicate;
-import java.util.function.Supplier;
 
 /**
  * This service is used by persistent tasks and allocated persistent tasks to communicate changes
  * to the master node so that the master can update the cluster state and can track of the states
  * of the persistent tasks.
  */
-public class PersistentTasksService extends AbstractComponent {
+public class PersistentTasksService {
 
-    private static final String ACTION_ORIGIN_TRANSIENT_NAME = "action.origin";
-    private static final String PERSISTENT_TASK_ORIGIN = "persistent_tasks";
+    private static final Logger logger = LogManager.getLogger(PersistentTasksService.class);
+
+    public static final String PERSISTENT_TASK_ORIGIN = "persistent_tasks";
 
     private final Client client;
     private final ClusterService clusterService;
     private final ThreadPool threadPool;
 
     public PersistentTasksService(ClusterService clusterService, ThreadPool threadPool, Client client) {
-        this.client = client;
+        this.client = new OriginSettingClient(client, PERSISTENT_TASK_ORIGIN);
         this.clusterService = clusterService;
         this.threadPool = threadPool;
     }
@@ -68,8 +57,7 @@ public class PersistentTasksService extends AbstractComponent {
                                                                        final Params taskParams,
                                                                        final ActionListener<PersistentTask<Params>> listener) {
         @SuppressWarnings("unchecked")
-        final ActionListener<PersistentTask<?>> wrappedListener =
-            ActionListener.wrap(t -> listener.onResponse((PersistentTask<Params>) t), listener::onFailure);
+        final ActionListener<PersistentTask<?>> wrappedListener = listener.map(t -> (PersistentTask<Params>) t);
         StartPersistentTaskAction.Request request = new StartPersistentTaskAction.Request(taskId, taskName, taskParams);
         execute(request, StartPersistentTaskAction.INSTANCE, wrappedListener);
     }
@@ -95,12 +83,7 @@ public class PersistentTasksService extends AbstractComponent {
         request.setTaskId(new TaskId(clusterService.localNode().getId(), taskId));
         request.setReason(reason);
         try {
-            final ThreadContext threadContext = client.threadPool().getThreadContext();
-            final Supplier<ThreadContext.StoredContext> supplier = threadContext.newRestorableContext(false);
-
-            try (ThreadContext.StoredContext ignore = stashWithOrigin(threadContext, PERSISTENT_TASK_ORIGIN)) {
-                client.admin().cluster().cancelTasks(request, new ContextPreservingActionListener<>(supplier, listener));
-            }
+            client.admin().cluster().cancelTasks(request, listener);
         } catch (Exception e) {
             listener.onFailure(e);
         }
@@ -135,16 +118,9 @@ public class PersistentTasksService extends AbstractComponent {
      * The origin is set in the context and the listener is wrapped to ensure the proper context is restored
      */
     private <Req extends ActionRequest, Resp extends PersistentTaskResponse>
-        void execute(final Req request, final Action<Resp> action, final ActionListener<PersistentTask<?>> listener) {
+        void execute(final Req request, final ActionType<Resp> action, final ActionListener<PersistentTask<?>> listener) {
             try {
-                final ThreadContext threadContext = client.threadPool().getThreadContext();
-                final Supplier<ThreadContext.StoredContext> supplier = threadContext.newRestorableContext(false);
-
-                try (ThreadContext.StoredContext ignore = stashWithOrigin(threadContext, PERSISTENT_TASK_ORIGIN)) {
-                    client.execute(action, request,
-                        new ContextPreservingActionListener<>(supplier,
-                            ActionListener.wrap(r -> listener.onResponse(r.getTask()), listener::onFailure)));
-                }
+                client.execute(action, request, listener.map(PersistentTaskResponse::getTask));
             } catch (Exception e) {
                 listener.onFailure(e);
             }
@@ -163,17 +139,17 @@ public class PersistentTasksService extends AbstractComponent {
                                                final @Nullable TimeValue timeout,
                                                final WaitForPersistentTaskListener<?> listener) {
         final Predicate<ClusterState> clusterStatePredicate = clusterState ->
-            predicate.test(PersistentTasksCustomMetaData.getTaskWithId(clusterState, taskId));
+            predicate.test(PersistentTasksCustomMetadata.getTaskWithId(clusterState, taskId));
 
         final ClusterStateObserver observer = new ClusterStateObserver(clusterService, timeout, logger, threadPool.getThreadContext());
         final ClusterState clusterState = observer.setAndGetObservedState();
         if (clusterStatePredicate.test(clusterState)) {
-            listener.onResponse(PersistentTasksCustomMetaData.getTaskWithId(clusterState, taskId));
+            listener.onResponse(PersistentTasksCustomMetadata.getTaskWithId(clusterState, taskId));
         } else {
             observer.waitForNextChange(new ClusterStateObserver.Listener() {
                 @Override
                 public void onNewClusterState(ClusterState state) {
-                    listener.onResponse(PersistentTasksCustomMetaData.getTaskWithId(state, taskId));
+                    listener.onResponse(PersistentTasksCustomMetadata.getTaskWithId(state, taskId));
                 }
 
                 @Override
@@ -196,11 +172,11 @@ public class PersistentTasksService extends AbstractComponent {
      * @param timeout a timeout for waiting
      * @param listener the callback listener
      */
-    public void waitForPersistentTasksCondition(final Predicate<PersistentTasksCustomMetaData> predicate,
+    public void waitForPersistentTasksCondition(final Predicate<PersistentTasksCustomMetadata> predicate,
                                                 final @Nullable TimeValue timeout,
                                                 final ActionListener<Boolean> listener) {
         final Predicate<ClusterState> clusterStatePredicate = clusterState ->
-            predicate.test(clusterState.metaData().custom(PersistentTasksCustomMetaData.TYPE));
+            predicate.test(clusterState.metadata().custom(PersistentTasksCustomMetadata.TYPE));
 
         final ClusterStateObserver observer = new ClusterStateObserver(clusterService, timeout, logger, threadPool.getThreadContext());
         if (clusterStatePredicate.test(observer.setAndGetObservedState())) {
@@ -229,11 +205,5 @@ public class PersistentTasksService extends AbstractComponent {
         default void onTimeout(TimeValue timeout) {
             onFailure(new IllegalStateException("Timed out when waiting for persistent task after " + timeout));
         }
-    }
-
-    public static ThreadContext.StoredContext stashWithOrigin(ThreadContext threadContext, String origin) {
-        final ThreadContext.StoredContext storedContext = threadContext.stashContext();
-        threadContext.putTransient(ACTION_ORIGIN_TRANSIENT_NAME, origin);
-        return storedContext;
     }
 }

@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.search.suggest.completion.context;
@@ -24,14 +13,12 @@ import org.apache.lucene.document.SortedSetDocValuesField;
 import org.apache.lucene.document.StoredField;
 import org.apache.lucene.index.IndexableField;
 import org.elasticsearch.ElasticsearchParseException;
-import org.elasticsearch.Version;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.common.xcontent.XContentParser.Token;
 import org.elasticsearch.index.mapper.KeywordFieldMapper;
 import org.elasticsearch.index.mapper.ParseContext;
 import org.elasticsearch.index.mapper.ParseContext.Document;
-import org.elasticsearch.index.mapper.StringFieldType;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -79,7 +66,7 @@ public class CategoryContextMapping extends ContextMapping<CategoryQueryContext>
     /**
      * Loads a <code>name</code>d {@link CategoryContextMapping} instance
      * from a map.
-     * see {@link ContextMappings#load(Object, Version)}
+     * see {@link ContextMappings#load(Object)}
      *
      * Acceptable map param: <code>path</code>
      */
@@ -111,9 +98,9 @@ public class CategoryContextMapping extends ContextMapping<CategoryQueryContext>
      *  </ul>
      */
     @Override
-    public Set<CharSequence> parseContext(ParseContext parseContext, XContentParser parser)
+    public Set<String> parseContext(ParseContext parseContext, XContentParser parser)
             throws IOException, ElasticsearchParseException {
-        final Set<CharSequence> contexts = new HashSet<>();
+        final Set<String> contexts = new HashSet<>();
         Token token = parser.currentToken();
         if (token == Token.VALUE_STRING || token == Token.VALUE_NUMBER || token == Token.VALUE_BOOLEAN) {
             contexts.add(parser.text());
@@ -134,22 +121,24 @@ public class CategoryContextMapping extends ContextMapping<CategoryQueryContext>
     }
 
     @Override
-    public Set<CharSequence> parseContext(Document document) {
-        Set<CharSequence> values = null;
+    public Set<String> parseContext(Document document) {
+        Set<String> values = null;
         if (fieldName != null) {
             IndexableField[] fields = document.getFields(fieldName);
             values = new HashSet<>(fields.length);
+            // TODO we should be checking mapped field types, not lucene field types
             for (IndexableField field : fields) {
                 if (field instanceof SortedDocValuesField ||
                         field instanceof SortedSetDocValuesField ||
                         field instanceof StoredField) {
                     // Ignore doc values and stored fields
-                } else if (field.fieldType() instanceof KeywordFieldMapper.KeywordFieldType) {
+                } else if (field instanceof KeywordFieldMapper.KeywordField) {
                     values.add(field.binaryValue().utf8ToString());
-                } else if (field.fieldType() instanceof StringFieldType) {
+                } else if (field.stringValue() != null) {
                     values.add(field.stringValue());
                 } else {
-                    throw new IllegalArgumentException("Failed to parse context field [" + fieldName + "], only keyword and text fields are accepted");
+                    throw new IllegalArgumentException("Failed to parse context field [" + fieldName +
+                            "], only keyword and text fields are accepted");
                 }
             }
         }
@@ -173,7 +162,8 @@ public class CategoryContextMapping extends ContextMapping<CategoryQueryContext>
      *
      *  A CategoryQueryContext has one of the following forms:
      *  <ul>
-     *     <li>Object: <pre>{&quot;context&quot;: <i>&lt;string&gt;</i>, &quot;boost&quot;: <i>&lt;int&gt;</i>, &quot;prefix&quot;: <i>&lt;boolean&gt;</i>}</pre></li>
+     *     <li>Object: <pre>{&quot;context&quot;: <i>&lt;string&gt;</i>, &quot;boost&quot;: <i>&lt;int&gt;</i>, &quot;prefix&quot;:
+     *     <i>&lt;boolean&gt;</i>}</pre></li>
      *     <li>String: <pre>&quot;string&quot;</pre></li>
      *  </ul>
      */
@@ -191,9 +181,9 @@ public class CategoryContextMapping extends ContextMapping<CategoryQueryContext>
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        if (!super.equals(o)) return false;
+        if (super.equals(o) == false) return false;
         CategoryContextMapping mapping = (CategoryContextMapping) o;
-        return !(fieldName != null ? !fieldName.equals(mapping.fieldName) : mapping.fieldName != null);
+        return Objects.equals(fieldName, mapping.fieldName);
     }
 
     @Override

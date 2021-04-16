@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.action.termvectors;
@@ -26,7 +15,6 @@ import org.elasticsearch.action.RealtimeRequest;
 import org.elasticsearch.action.ValidateActions;
 import org.elasticsearch.action.get.MultiGetRequest;
 import org.elasticsearch.action.support.single.shard.SingleShardRequest;
-import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.ParseField;
 import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.bytes.BytesReference;
@@ -53,16 +41,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 
 /**
- * Request returning the term vector (doc frequency, positions, offsets) for a
- * document.
+ * Request returning the term vector (doc frequency, positions, offsets) for a document.
  * <p>
- * Note, the {@link #index()}, {@link #type(String)} and {@link #id(String)} are
- * required.
+ * Note, the {@link #index()} and {@link #id(String)} are required.
  */
 public class TermVectorsRequest extends SingleShardRequest<TermVectorsRequest> implements RealtimeRequest {
 
     private static final ParseField INDEX = new ParseField("_index");
-    private static final ParseField TYPE = new ParseField("_type");
     private static final ParseField ID = new ParseField("_id");
     private static final ParseField ROUTING = new ParseField("routing");
     private static final ParseField VERSION = new ParseField("version");
@@ -75,8 +60,6 @@ public class TermVectorsRequest extends SingleShardRequest<TermVectorsRequest> i
     private static final ParseField FILTER = new ParseField("filter");
     private static final ParseField DOC = new ParseField("doc");
 
-
-    private String type;
 
     private String id;
 
@@ -112,22 +95,6 @@ public class TermVectorsRequest extends SingleShardRequest<TermVectorsRequest> i
         public Integer minWordLength;
         public Integer maxWordLength;
 
-        public FilterSettings() {
-
-        }
-
-        public FilterSettings(@Nullable Integer maxNumTerms, @Nullable Integer minTermFreq, @Nullable Integer maxTermFreq,
-                              @Nullable Integer minDocFreq, @Nullable Integer maxDocFreq, @Nullable Integer minWordLength,
-                              @Nullable Integer maxWordLength) {
-            this.maxNumTerms = maxNumTerms;
-            this.minTermFreq = minTermFreq;
-            this.maxTermFreq = maxTermFreq;
-            this.minDocFreq = minDocFreq;
-            this.maxDocFreq = maxDocFreq;
-            this.minWordLength = minWordLength;
-            this.maxWordLength = maxWordLength;
-        }
-
         public void readFrom(StreamInput in) throws IOException {
             maxNumTerms = in.readOptionalVInt();
             minTermFreq = in.readOptionalVInt();
@@ -155,26 +122,65 @@ public class TermVectorsRequest extends SingleShardRequest<TermVectorsRequest> i
     public TermVectorsRequest() {
     }
 
-    /**
-     * Constructs a new term vector request for a document that will be fetch
-     * from the provided index. Use {@link #type(String)} and
-     * {@link #id(String)} to specify the document to load.
-     */
-    public TermVectorsRequest(String index, String type, String id) {
-        super(index);
-        this.id = id;
-        this.type = type;
+    TermVectorsRequest(StreamInput in) throws IOException {
+        super(in);
+        if (in.getVersion().before(Version.V_8_0_0)) {
+            // types no longer relevant so ignore
+            in.readString();
+        }
+        id = in.readString();
+
+        if (in.readBoolean()) {
+            doc = in.readBytesReference();
+            xContentType = in.readEnum(XContentType.class);
+        }
+        routing = in.readOptionalString();
+        preference = in.readOptionalString();
+        long flags = in.readVLong();
+
+        flagsEnum.clear();
+        for (Flag flag : Flag.values()) {
+            if ((flags & (1 << flag.ordinal())) != 0) {
+                flagsEnum.add(flag);
+            }
+        }
+        int numSelectedFields = in.readVInt();
+        if (numSelectedFields > 0) {
+            selectedFields = new HashSet<>();
+            for (int i = 0; i < numSelectedFields; i++) {
+                selectedFields.add(in.readString());
+            }
+        }
+        if (in.readBoolean()) {
+            perFieldAnalyzer = readPerFieldAnalyzer(in.readMap());
+        }
+        if (in.readBoolean()) {
+            filterSettings = new FilterSettings();
+            filterSettings.readFrom(in);
+        }
+        realtime = in.readBoolean();
+        versionType = VersionType.fromValue(in.readByte());
+        version = in.readLong();
     }
 
     /**
      * Constructs a new term vector request for a document that will be fetch
-     * from the provided index. Use {@link #type(String)} and
-     * {@link #id(String)} to specify the document to load.
+     * from the provided index. Use and {@link #id(String)} to specify the
+     * document to load.
+     */
+    public TermVectorsRequest(String index, String id) {
+        super(index);
+        this.id = id;
+    }
+
+    /**
+     * Constructs a new term vector request for a document that will be fetch
+     * from the provided index. Use {@link #id(String)} to specify the
+     * document to load.
      */
     public TermVectorsRequest(TermVectorsRequest other) {
         super(other.index());
         this.id = other.id();
-        this.type = other.type();
         if (other.doc != null) {
             this.doc = new BytesArray(other.doc().toBytesRef(), true);
             this.xContentType = other.xContentType;
@@ -197,28 +203,12 @@ public class TermVectorsRequest extends SingleShardRequest<TermVectorsRequest> i
     public TermVectorsRequest(MultiGetRequest.Item item) {
         super(item.index());
         this.id = item.id();
-        this.type = item.type();
         this.selectedFields(item.storedFields());
         this.routing(item.routing());
     }
 
     public EnumSet<Flag> getFlags() {
         return flagsEnum;
-    }
-
-    /**
-     * Sets the type of document to get the term vector for.
-     */
-    public TermVectorsRequest type(String type) {
-        this.type = type;
-        return this;
-    }
-
-    /**
-     * Returns the type of document to get the term vector for.
-     */
-    public String type() {
-        return type;
     }
 
     /**
@@ -440,7 +430,7 @@ public class TermVectorsRequest extends SingleShardRequest<TermVectorsRequest> i
      * Sets the settings for filtering out terms.
      */
     public TermVectorsRequest filterSettings(FilterSettings settings) {
-        this.filterSettings = settings != null ? settings : null;
+        this.filterSettings = settings;
         return this;
     }
 
@@ -463,91 +453,38 @@ public class TermVectorsRequest extends SingleShardRequest<TermVectorsRequest> i
     }
 
     private void setFlag(Flag flag, boolean set) {
-        if (set && !flagsEnum.contains(flag)) {
+        if (set && flagsEnum.contains(flag) == false) {
             flagsEnum.add(flag);
-        } else if (!set) {
+        } else if (set == false) {
             flagsEnum.remove(flag);
-            assert (!flagsEnum.contains(flag));
+            assert flagsEnum.contains(flag) == false;
         }
     }
 
     @Override
     public ActionRequestValidationException validate() {
         ActionRequestValidationException validationException = super.validateNonNullIndex();
-        if (type == null) {
-            validationException = ValidateActions.addValidationError("type is missing", validationException);
-        }
         if (id == null && doc == null) {
             validationException = ValidateActions.addValidationError("id or doc is missing", validationException);
         }
         return validationException;
     }
 
-    public static TermVectorsRequest readTermVectorsRequest(StreamInput in) throws IOException {
-        TermVectorsRequest termVectorsRequest = new TermVectorsRequest();
-        termVectorsRequest.readFrom(in);
-        return termVectorsRequest;
-    }
-
-
-    @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
-        type = in.readString();
-        id = in.readString();
-
-        if (in.readBoolean()) {
-            doc = in.readBytesReference();
-            xContentType = in.readEnum(XContentType.class);
-        }
-        routing = in.readOptionalString();
-
-        if (in.getVersion().before(Version.V_7_0_0)) {
-            in.readOptionalString(); // _parent
-        }
-        preference = in.readOptionalString();
-        long flags = in.readVLong();
-
-        flagsEnum.clear();
-        for (Flag flag : Flag.values()) {
-            if ((flags & (1 << flag.ordinal())) != 0) {
-                flagsEnum.add(flag);
-            }
-        }
-        int numSelectedFields = in.readVInt();
-        if (numSelectedFields > 0) {
-            selectedFields = new HashSet<>();
-            for (int i = 0; i < numSelectedFields; i++) {
-                selectedFields.add(in.readString());
-            }
-        }
-        if (in.readBoolean()) {
-            perFieldAnalyzer = readPerFieldAnalyzer(in.readMap());
-        }
-        if (in.readBoolean()) {
-            filterSettings = new FilterSettings();
-            filterSettings.readFrom(in);
-        }
-        realtime = in.readBoolean();
-        versionType = VersionType.fromValue(in.readByte());
-        version = in.readLong();
-    }
-
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
-        out.writeString(type);
+        if (out.getVersion().before(Version.V_8_0_0)) {
+            // types not supported so send an empty array to previous versions
+            out.writeString("_doc");
+        }
         out.writeString(id);
 
         out.writeBoolean(doc != null);
         if (doc != null) {
             out.writeBytesReference(doc);
-            out.writeEnum(xContentType);
+            XContentHelper.writeTo(out, xContentType);
         }
         out.writeOptionalString(routing);
-        if (out.getVersion().before(Version.V_7_0_0)) {
-            out.writeOptionalString(null); // _parent
-        }
         out.writeOptionalString(preference);
         long longFlags = 0;
         for (Flag flag : flagsEnum) {
@@ -555,10 +492,7 @@ public class TermVectorsRequest extends SingleShardRequest<TermVectorsRequest> i
         }
         out.writeVLong(longFlags);
         if (selectedFields != null) {
-            out.writeVInt(selectedFields.size());
-            for (String selectedField : selectedFields) {
-                out.writeString(selectedField);
-            }
+            out.writeStringCollection(selectedFields);
         } else {
             out.writeVInt(0);
         }
@@ -616,18 +550,19 @@ public class TermVectorsRequest extends SingleShardRequest<TermVectorsRequest> i
                     termVectorsRequest.perFieldAnalyzer(readPerFieldAnalyzer(parser.map()));
                 } else if (FILTER.match(currentFieldName, parser.getDeprecationHandler())) {
                     termVectorsRequest.filterSettings(readFilterSettings(parser));
-                } else if (INDEX.match(currentFieldName, parser.getDeprecationHandler())) { // the following is important for multi request parsing.
+                } else if (INDEX.match(currentFieldName, parser.getDeprecationHandler())) {
+                    // the following is important for multi request parsing.
                     termVectorsRequest.index = parser.text();
-                } else if (TYPE.match(currentFieldName, parser.getDeprecationHandler())) {
-                    termVectorsRequest.type = parser.text();
                 } else if (ID.match(currentFieldName, parser.getDeprecationHandler())) {
                     if (termVectorsRequest.doc != null) {
-                        throw new ElasticsearchParseException("failed to parse term vectors request. either [id] or [doc] can be specified, but not both!");
+                        throw new ElasticsearchParseException("failed to parse term vectors request. " +
+                            "either [id] or [doc] can be specified, but not both!");
                     }
                     termVectorsRequest.id = parser.text();
                 } else if (DOC.match(currentFieldName, parser.getDeprecationHandler())) {
                     if (termVectorsRequest.id != null) {
-                        throw new ElasticsearchParseException("failed to parse term vectors request. either [id] or [doc] can be specified, but not both!");
+                        throw new ElasticsearchParseException("failed to parse term vectors request. " +
+                            "either [id] or [doc] can be specified, but not both!");
                     }
                     termVectorsRequest.doc(jsonBuilder().copyCurrentStructure(parser));
                 } else if (ROUTING.match(currentFieldName, parser.getDeprecationHandler())) {
@@ -653,7 +588,8 @@ public class TermVectorsRequest extends SingleShardRequest<TermVectorsRequest> i
             if (e.getValue() instanceof String) {
                 mapStrStr.put(e.getKey(), (String) e.getValue());
             } else {
-                throw new ElasticsearchParseException("expecting the analyzer at [{}] to be a String, but found [{}] instead", e.getKey(), e.getValue().getClass());
+                throw new ElasticsearchParseException("expecting the analyzer at [{}] to be a String, but found [{}] instead",
+                    e.getKey(), e.getValue().getClass());
             }
         }
         return mapStrStr;
@@ -682,7 +618,8 @@ public class TermVectorsRequest extends SingleShardRequest<TermVectorsRequest> i
                 } else if (currentFieldName.equals("max_word_length")) {
                     settings.maxWordLength = parser.intValue();
                 } else {
-                    throw new ElasticsearchParseException("failed to parse term vectors request. the field [{}] is not valid for filter parameter for term vector request", currentFieldName);
+                    throw new ElasticsearchParseException("failed to parse term vectors request. " +
+                        "the field [{}] is not valid for filter parameter for term vector request", currentFieldName);
                 }
             }
         }

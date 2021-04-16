@@ -1,10 +1,13 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.watcher.execution;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.indices.refresh.RefreshRequest;
 import org.elasticsearch.action.bulk.BulkItemResponse;
@@ -20,9 +23,8 @@ import org.elasticsearch.action.search.SearchScrollRequest;
 import org.elasticsearch.action.support.PlainActionFuture;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.ClusterState;
-import org.elasticsearch.cluster.metadata.IndexMetaData;
+import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.routing.Preference;
-import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.ToXContent;
@@ -48,7 +50,9 @@ import java.util.stream.Collectors;
 
 import static org.elasticsearch.xpack.core.ClientHelper.WATCHER_ORIGIN;
 
-public class TriggeredWatchStore extends AbstractComponent {
+public class TriggeredWatchStore {
+
+    private static final Logger logger = LogManager.getLogger(TriggeredWatchStore.class);
 
     private final int scrollSize;
     private final Client client;
@@ -93,8 +97,7 @@ public class TriggeredWatchStore extends AbstractComponent {
     private BulkRequest createBulkRequest(final List<TriggeredWatch> triggeredWatches) throws IOException {
         BulkRequest request = new BulkRequest();
         for (TriggeredWatch triggeredWatch : triggeredWatches) {
-            IndexRequest indexRequest = new IndexRequest(TriggeredWatchStoreField.INDEX_NAME, TriggeredWatchStoreField.DOC_TYPE,
-                triggeredWatch.id().value());
+            IndexRequest indexRequest = new IndexRequest(TriggeredWatchStoreField.INDEX_NAME).id(triggeredWatch.id().value());
             try (XContentBuilder builder = XContentFactory.jsonBuilder()) {
                 triggeredWatch.toXContent(builder, ToXContent.EMPTY_PARAMS);
                 indexRequest.source(builder);
@@ -112,7 +115,7 @@ public class TriggeredWatchStore extends AbstractComponent {
      * @param wid The ID os the triggered watch id
      */
     public void delete(Wid wid) {
-        DeleteRequest request = new DeleteRequest(TriggeredWatchStoreField.INDEX_NAME, TriggeredWatchStoreField.DOC_TYPE, wid.value());
+        DeleteRequest request = new DeleteRequest(TriggeredWatchStoreField.INDEX_NAME, wid.value());
         bulkProcessor.add(request);
     }
 
@@ -131,8 +134,8 @@ public class TriggeredWatchStore extends AbstractComponent {
         }
 
         // non existing index, return immediately
-        IndexMetaData indexMetaData = WatchStoreUtils.getConcreteIndex(TriggeredWatchStoreField.INDEX_NAME, clusterState.metaData());
-        if (indexMetaData == null) {
+        IndexMetadata indexMetadata = WatchStoreUtils.getConcreteIndex(TriggeredWatchStoreField.INDEX_NAME, clusterState.metadata());
+        if (indexMetadata == null) {
             return Collections.emptyList();
         }
 
@@ -157,7 +160,7 @@ public class TriggeredWatchStore extends AbstractComponent {
         SearchResponse response = null;
         try {
             response = client.search(searchRequest).actionGet(defaultSearchTimeout);
-            logger.debug("trying to find triggered watches for ids {}: found [{}] docs", ids, response.getHits().getTotalHits());
+            logger.debug("trying to find triggered watches for ids {}: found [{}] docs", ids, response.getHits().getTotalHits().value);
             while (response.getHits().getHits().length != 0) {
                 for (SearchHit hit : response.getHits()) {
                     Wid wid = new Wid(hit.getId());
@@ -182,8 +185,8 @@ public class TriggeredWatchStore extends AbstractComponent {
     }
 
     public static boolean validate(ClusterState state) {
-        IndexMetaData indexMetaData = WatchStoreUtils.getConcreteIndex(TriggeredWatchStoreField.INDEX_NAME, state.metaData());
-        return indexMetaData == null || (indexMetaData.getState() == IndexMetaData.State.OPEN &&
-            state.routingTable().index(indexMetaData.getIndex()).allPrimaryShardsActive());
+        IndexMetadata indexMetadata = WatchStoreUtils.getConcreteIndex(TriggeredWatchStoreField.INDEX_NAME, state.metadata());
+        return indexMetadata == null || (indexMetadata.getState() == IndexMetadata.State.OPEN &&
+            state.routingTable().index(indexMetadata.getIndex()).allPrimaryShardsActive());
     }
 }

@@ -1,10 +1,12 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.protocol.xpack;
 
+import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionResponse;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.ParseField;
@@ -13,10 +15,8 @@ import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.xcontent.ConstructingObjectParser;
-import org.elasticsearch.common.xcontent.ObjectParser.ValueType;
 import org.elasticsearch.common.xcontent.ToXContentObject;
 import org.elasticsearch.common.xcontent.XContentBuilder;
-import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.protocol.xpack.license.LicenseStatus;
 
 import java.io.IOException;
@@ -24,7 +24,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -33,7 +32,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static org.elasticsearch.common.xcontent.ConstructingObjectParser.constructorArg;
-import static org.elasticsearch.common.xcontent.ConstructingObjectParser.optionalConstructorArg;
 
 public class XPackInfoResponse extends ActionResponse implements ToXContentObject {
     /**
@@ -46,7 +44,12 @@ public class XPackInfoResponse extends ActionResponse implements ToXContentObjec
     @Nullable private LicenseInfo licenseInfo;
     @Nullable private FeatureSetsInfo featureSetsInfo;
 
-    public XPackInfoResponse() {}
+    public XPackInfoResponse(StreamInput in) throws IOException {
+        super(in);
+        this.buildInfo = in.readOptionalWriteable(BuildInfo::new);
+        this.licenseInfo = in.readOptionalWriteable(LicenseInfo::new);
+        this.featureSetsInfo = in.readOptionalWriteable(FeatureSetsInfo::new);
+    }
 
     public XPackInfoResponse(@Nullable BuildInfo buildInfo, @Nullable LicenseInfo licenseInfo, @Nullable FeatureSetsInfo featureSetsInfo) {
         this.buildInfo = buildInfo;
@@ -78,17 +81,9 @@ public class XPackInfoResponse extends ActionResponse implements ToXContentObjec
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
-        super.writeTo(out);
         out.writeOptionalWriteable(buildInfo);
         out.writeOptionalWriteable(licenseInfo);
         out.writeOptionalWriteable(featureSetsInfo);
-    }
-
-    @Override
-    public void readFrom(StreamInput in) throws IOException {
-        this.buildInfo = in.readOptionalWriteable(BuildInfo::new);
-        this.licenseInfo = in.readOptionalWriteable(LicenseInfo::new);
-        this.featureSetsInfo = in.readOptionalWriteable(FeatureSetsInfo::new);
     }
 
     @Override
@@ -109,36 +104,6 @@ public class XPackInfoResponse extends ActionResponse implements ToXContentObjec
     @Override
     public String toString() {
         return Strings.toString(this, true, false);
-    }
-
-    private static final ConstructingObjectParser<XPackInfoResponse, Void> PARSER = new ConstructingObjectParser<>(
-            "xpack_info_response", true, (a, v) -> {
-                BuildInfo buildInfo = (BuildInfo) a[0];
-                LicenseInfo licenseInfo = (LicenseInfo) a[1];
-                @SuppressWarnings("unchecked") // This is how constructing object parser works
-                List<FeatureSetsInfo.FeatureSet> featureSets = (List<FeatureSetsInfo.FeatureSet>) a[2];
-                FeatureSetsInfo featureSetsInfo = featureSets == null ? null : new FeatureSetsInfo(new HashSet<>(featureSets));
-                return new XPackInfoResponse(buildInfo, licenseInfo, featureSetsInfo);
-            });
-    static {
-        PARSER.declareObject(optionalConstructorArg(), BuildInfo.PARSER, new ParseField("build"));
-        /*
-         * licenseInfo is sort of "double optional" because it is
-         * optional but it can also be send as `null`.
-         */
-        PARSER.declareField(optionalConstructorArg(), (p, v) -> {
-                    if (p.currentToken() == XContentParser.Token.VALUE_NULL) {
-                        return null;
-                    }
-                    return LicenseInfo.PARSER.parse(p, v);
-                },
-                new ParseField("license"), ValueType.OBJECT_OR_NULL);
-        PARSER.declareNamedObjects(optionalConstructorArg(),
-                (p, c, name) -> FeatureSetsInfo.FeatureSet.PARSER.parse(p, name),
-                new ParseField("features"));
-    }
-    public static XPackInfoResponse fromXContent(XContentParser parser) throws IOException {
-        return PARSER.parse(parser, null);
     }
 
     @Override
@@ -234,24 +199,6 @@ public class XPackInfoResponse extends ActionResponse implements ToXContentObjec
         @Override
         public int hashCode() {
             return Objects.hash(uid, type, mode, status, expiryDate);
-        }
-
-        private static final ConstructingObjectParser<LicenseInfo, Void> PARSER = new ConstructingObjectParser<>(
-                "license_info", true, (a, v) -> {
-                    String uid = (String) a[0];
-                    String type = (String) a[1];
-                    String mode = (String) a[2];
-                    LicenseStatus status = LicenseStatus.fromString((String) a[3]);
-                    Long expiryDate = (Long) a[4];
-                    long primitiveExpiryDate = expiryDate == null ? BASIC_SELF_GENERATED_LICENSE_EXPIRATION_MILLIS : expiryDate;
-                    return new LicenseInfo(uid, type, mode, status, primitiveExpiryDate);
-                });
-        static {
-            PARSER.declareString(constructorArg(), new ParseField("uid"));
-            PARSER.declareString(constructorArg(), new ParseField("type"));
-            PARSER.declareString(constructorArg(), new ParseField("mode"));
-            PARSER.declareString(constructorArg(), new ParseField("status"));
-            PARSER.declareLong(optionalConstructorArg(), new ParseField("expiry_date_in_millis"));
         }
 
         @Override
@@ -383,40 +330,46 @@ public class XPackInfoResponse extends ActionResponse implements ToXContentObjec
 
         public static class FeatureSet implements ToXContentObject, Writeable {
             private final String name;
-            @Nullable private final String description;
             private final boolean available;
             private final boolean enabled;
-            @Nullable private final Map<String, Object> nativeCodeInfo;
 
-            public FeatureSet(String name, @Nullable String description, boolean available, boolean enabled,
-                              @Nullable Map<String, Object> nativeCodeInfo) {
+            public FeatureSet(String name, boolean available, boolean enabled) {
                 this.name = name;
-                this.description = description;
                 this.available = available;
                 this.enabled = enabled;
-                this.nativeCodeInfo = nativeCodeInfo;
             }
 
             public FeatureSet(StreamInput in) throws IOException {
-                this(in.readString(), in.readOptionalString(), in.readBoolean(), in.readBoolean(), in.readMap());
+                this(in.readString(), readAvailable(in), in.readBoolean());
+                if (in.getVersion().before(Version.V_8_0_0)) {
+                    in.readMap(); // backcompat reading native code info, but no longer used here
+                }
+            }
+
+            // this is separated out so that the removed description can be read from the stream on construction
+            // TODO: remove this for 8.0
+            private static boolean readAvailable(StreamInput in) throws IOException {
+                if (in.getVersion().before(Version.V_7_3_0)) {
+                    in.readOptionalString();
+                }
+                return in.readBoolean();
             }
 
             @Override
             public void writeTo(StreamOutput out) throws IOException {
                 out.writeString(name);
-                out.writeOptionalString(description);
+                if (out.getVersion().before(Version.V_7_3_0)) {
+                    out.writeOptionalString(null);
+                }
                 out.writeBoolean(available);
                 out.writeBoolean(enabled);
-                out.writeMap(nativeCodeInfo);
+                if (out.getVersion().before(Version.V_8_0_0)) {
+                    out.writeMap(Collections.emptyMap());
+                }
             }
 
             public String name() {
                 return name;
-            }
-
-            @Nullable
-            public String description() {
-                return description;
             }
 
             public boolean available() {
@@ -427,55 +380,26 @@ public class XPackInfoResponse extends ActionResponse implements ToXContentObjec
                 return enabled;
             }
 
-            @Nullable
-            public Map<String, Object> nativeCodeInfo() {
-                return nativeCodeInfo;
-            }
-
             @Override
             public boolean equals(Object other) {
                 if (other == null || other.getClass() != getClass()) return false;
                 if (this == other) return true;
                 FeatureSet rhs = (FeatureSet) other;
                 return Objects.equals(name, rhs.name)
-                        && Objects.equals(description, rhs.description)
                         && available == rhs.available
-                        && enabled == rhs.enabled
-                        && Objects.equals(nativeCodeInfo, rhs.nativeCodeInfo);
+                        && enabled == rhs.enabled;
             }
 
             @Override
             public int hashCode() {
-                return Objects.hash(name, description, available, enabled, nativeCodeInfo);
-            }
-
-            private static final ConstructingObjectParser<FeatureSet, String> PARSER = new ConstructingObjectParser<>(
-                    "feature_set", true, (a, name) -> {
-                        String description = (String) a[0];
-                        boolean available = (Boolean) a[1];
-                        boolean enabled = (Boolean) a[2];
-                        @SuppressWarnings("unchecked") // Matches up with declaration below
-                        Map<String, Object> nativeCodeInfo = (Map<String, Object>) a[3];
-                        return new FeatureSet(name, description, available, enabled, nativeCodeInfo);
-                    });
-            static {
-                PARSER.declareString(optionalConstructorArg(), new ParseField("description"));
-                PARSER.declareBoolean(constructorArg(), new ParseField("available"));
-                PARSER.declareBoolean(constructorArg(), new ParseField("enabled"));
-                PARSER.declareObject(optionalConstructorArg(), (p, name) -> p.map(), new ParseField("native_code_info"));
+                return Objects.hash(name, available, enabled);
             }
 
             @Override
             public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
                 builder.startObject();
-                if (description != null) {
-                    builder.field("description", description);
-                }
                 builder.field("available", available);
                 builder.field("enabled", enabled);
-                if (nativeCodeInfo != null) {
-                    builder.field("native_code_info", nativeCodeInfo);
-                }
                 return builder.endObject();
             }
         }

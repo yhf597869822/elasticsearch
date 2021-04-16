@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.action.main;
@@ -42,7 +31,15 @@ public class MainResponse extends ActionResponse implements ToXContentObject {
     private String clusterUuid;
     private Build build;
 
-    MainResponse() {
+    MainResponse() {}
+
+    MainResponse(StreamInput in) throws IOException {
+        super(in);
+        nodeName = in.readString();
+        version = Version.readVersion(in);
+        clusterName = new ClusterName(in);
+        clusterUuid = in.readString();
+        build = Build.readBuild(in);
     }
 
     public MainResponse(String nodeName, Version version, ClusterName clusterName, String clusterUuid, Build build) {
@@ -76,28 +73,11 @@ public class MainResponse extends ActionResponse implements ToXContentObject {
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
-        super.writeTo(out);
         out.writeString(nodeName);
         Version.writeVersion(version, out);
         clusterName.writeTo(out);
         out.writeString(clusterUuid);
         Build.writeBuild(build, out);
-        if (out.getVersion().before(Version.V_7_0_0)) {
-            out.writeBoolean(true);
-        }
-    }
-
-    @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
-        nodeName = in.readString();
-        version = Version.readVersion(in);
-        clusterName = new ClusterName(in);
-        clusterUuid = in.readString();
-        build = Build.readBuild(in);
-        if (in.getVersion().before(Version.V_7_0_0)) {
-            in.readBoolean();
-        }
     }
 
     @Override
@@ -107,13 +87,12 @@ public class MainResponse extends ActionResponse implements ToXContentObject {
         builder.field("cluster_name", clusterName.value());
         builder.field("cluster_uuid", clusterUuid);
         builder.startObject("version")
-            .field("number", version.toString())
+            .field("number", build.getQualifiedVersion())
             .field("build_flavor", build.flavor().displayName())
             .field("build_type", build.type().displayName())
-            .field("build_hash", build.shortHash())
+            .field("build_hash", build.hash())
             .field("build_date", build.date())
             .field("build_snapshot", build.isSnapshot())
-            .field("qualified", build.getQualifiedVersion())
             .field("lucene_version", version.luceneVersion.toString())
             .field("minimum_wire_compatibility_version", version.minimumCompatibilityVersion().toString())
             .field("minimum_index_compatibility_version", version.minimumIndexCompatibilityVersion().toString())
@@ -136,14 +115,22 @@ public class MainResponse extends ActionResponse implements ToXContentObject {
             final String buildType = (String) value.get("build_type");
             response.build =
                     new Build(
-                            buildFlavor == null ? Build.Flavor.UNKNOWN : Build.Flavor.fromDisplayName(buildFlavor),
-                            buildType == null ? Build.Type.UNKNOWN : Build.Type.fromDisplayName(buildType),
+                            /*
+                             * Be lenient when reading on the wire, the enumeration values from other versions might be different than what
+                             * we know.
+                             */
+                            buildFlavor == null ? Build.Flavor.UNKNOWN : Build.Flavor.fromDisplayName(buildFlavor, false),
+                            buildType == null ? Build.Type.UNKNOWN : Build.Type.fromDisplayName(buildType, false),
                             (String) value.get("build_hash"),
                             (String) value.get("build_date"),
                             (boolean) value.get("build_snapshot"),
-                            (String) value.get("qualified")
+                            (String) value.get("number")
                     );
-            response.version = Version.fromString((String) value.get("number"));
+            response.version = Version.fromString(
+                ((String) value.get("number"))
+                    .replace("-SNAPSHOT", "")
+                    .replaceFirst("-(alpha\\d+|beta\\d+|rc\\d+)", "")
+            );
         }, (parser, context) -> parser.map(), new ParseField("version"));
     }
 
@@ -170,5 +157,16 @@ public class MainResponse extends ActionResponse implements ToXContentObject {
     @Override
     public int hashCode() {
         return Objects.hash(nodeName, version, clusterUuid, build, clusterName);
+    }
+
+    @Override
+    public String toString() {
+        return "MainResponse{" +
+            "nodeName='" + nodeName + '\'' +
+            ", version=" + version +
+            ", clusterName=" + clusterName +
+            ", clusterUuid='" + clusterUuid + '\'' +
+            ", build=" + build +
+            '}';
     }
 }

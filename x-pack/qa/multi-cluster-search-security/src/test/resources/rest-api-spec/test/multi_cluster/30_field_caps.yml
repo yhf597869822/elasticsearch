@@ -7,15 +7,15 @@ setup:
       cluster.health:
         wait_for_status: yellow
   - do:
-      xpack.security.put_user:
+      security.put_user:
         username: "joe"
         body:  >
             {
-              "password": "s3krit",
+              "password": "s3krit-password",
               "roles" : [ "x_cluster_role" ]
             }
   - do:
-      xpack.security.put_role:
+      security.put_role:
         name: "x_cluster_role"
         body:  >
             {
@@ -30,11 +30,11 @@ setup:
 ---
 teardown:
   - do:
-      xpack.security.delete_user:
+      security.delete_user:
         username: "joe"
         ignore: 404
   - do:
-      xpack.security.delete_role:
+      security.delete_role:
         name: "x_cluster_role"
         ignore: 404
 ---
@@ -44,28 +44,27 @@ teardown:
           index: field_caps_index_2
           body:
               mappings:
-                t:
-                  properties:
-                    text:
-                      type:     text
-                    keyword:
-                      type:     keyword
-                    number:
-                      type:     double
-                    geo:
-                      type:     geo_point
-                    object:
-                      type: object
-                      properties:
-                        nested1 :
-                          type : text
-                          index: true
-                        nested2:
-                          type: float
-                          doc_values: true
+                properties:
+                  text:
+                    type:     text
+                  keyword:
+                    type:     keyword
+                  number:
+                    type:     double
+                  geo:
+                    type:     geo_point
+                  object:
+                    type: object
+                    properties:
+                      nested1 :
+                        type : text
+                        index: true
+                      nested2:
+                        type: float
+                        doc_values: true
 
   - do:
-      headers: { Authorization: "Basic am9lOnMza3JpdA==" }
+      headers: { Authorization: "Basic am9lOnMza3JpdC1wYXNzd29yZA==" }
       field_caps:
         index: 'field_caps_index_2,my_remote_cluster:field_caps_index_1,my_remote_cluster:field_caps_index_3'
         fields: [text, keyword, number, geo]

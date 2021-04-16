@@ -1,12 +1,12 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.example.role;
 
 import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.xpack.core.security.authz.RoleDescriptor;
 import org.elasticsearch.xpack.core.security.authz.store.RoleRetrievalResult;
 
@@ -19,9 +19,7 @@ import java.util.function.BiConsumer;
  * A custom roles provider implementation for testing that serves
  * static roles from memory.
  */
-public class CustomInMemoryRolesProvider
-    extends AbstractComponent
-    implements BiConsumer<Set<String>, ActionListener<RoleRetrievalResult>> {
+public class CustomInMemoryRolesProvider implements BiConsumer<Set<String>, ActionListener<RoleRetrievalResult>> {
 
     public static final String INDEX = "foo";
     public static final String ROLE_A = "roleA";

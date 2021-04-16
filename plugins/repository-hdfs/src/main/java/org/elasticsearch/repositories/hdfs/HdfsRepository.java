@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 package org.elasticsearch.repositories.hdfs;
 
@@ -30,15 +19,17 @@ import org.apache.hadoop.security.UserGroupInformation.AuthenticationMethod;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.SpecialPermission;
-import org.elasticsearch.cluster.metadata.RepositoryMetaData;
+import org.elasticsearch.cluster.metadata.RepositoryMetadata;
+import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.SuppressForbidden;
 import org.elasticsearch.common.blobstore.BlobPath;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.env.Environment;
+import org.elasticsearch.indices.recovery.RecoverySettings;
 import org.elasticsearch.repositories.blobstore.BlobStoreRepository;
 
 import java.io.IOException;
@@ -52,28 +43,22 @@ import java.util.Locale;
 
 public final class HdfsRepository extends BlobStoreRepository {
 
-    private static final Logger LOGGER = LogManager.getLogger(HdfsRepository.class);
+    private static final Logger logger = LogManager.getLogger(HdfsRepository.class);
 
     private static final String CONF_SECURITY_PRINCIPAL = "security.principal";
 
     private final Environment environment;
     private final ByteSizeValue chunkSize;
-    private final boolean compress;
-    private final BlobPath basePath = BlobPath.cleanPath();
     private final URI uri;
     private final String pathSetting;
 
-    // buffer size passed to HDFS read/write methods
-    // TODO: why 100KB?
-    private static final ByteSizeValue DEFAULT_BUFFER_SIZE = new ByteSizeValue(100, ByteSizeUnit.KB);
-
-    public HdfsRepository(RepositoryMetaData metadata, Environment environment,
-                          NamedXContentRegistry namedXContentRegistry) {
-        super(metadata, environment.settings(), namedXContentRegistry);
+    public HdfsRepository(RepositoryMetadata metadata, Environment environment,
+                          NamedXContentRegistry namedXContentRegistry, ClusterService clusterService, BigArrays bigArrays,
+                          RecoverySettings recoverySettings) {
+        super(metadata, namedXContentRegistry, clusterService, bigArrays, recoverySettings, BlobPath.cleanPath());
 
         this.environment = environment;
         this.chunkSize = metadata.settings().getAsBytesSize("chunk_size", null);
-        this.compress = metadata.settings().getAsBoolean("compress", false);
 
         String uriSetting = getMetadata().settings().get("uri");
         if (Strings.hasText(uriSetting) == false) {
@@ -105,7 +90,7 @@ public final class HdfsRepository extends BlobStoreRepository {
 
         final Settings confSettings = repositorySettings.getByPrefix("conf.");
         for (String key : confSettings.keySet()) {
-            LOGGER.debug("Adding configuration to HDFS Client Configuration : {} = {}", key, confSettings.get(key));
+            logger.debug("Adding configuration to HDFS Client Configuration : {} = {}", key, confSettings.get(key));
             hadoopConfiguration.set(key, confSettings.get(key));
         }
 
@@ -122,8 +107,6 @@ public final class HdfsRepository extends BlobStoreRepository {
         String configKey = HdfsClientConfigKeys.Failover.PROXY_PROVIDER_KEY_PREFIX + "." + host;
         Class<?> ret = hadoopConfiguration.getClass(configKey, null, FailoverProxyProvider.class);
         boolean haEnabled = ret != null;
-
-        int bufferSize = repositorySettings.getAsBytesSize("buffer_size", DEFAULT_BUFFER_SIZE).bytesAsInt();
 
         // Create the filecontext with our user information
         // This will correctly configure the filecontext to have our UGI as its internal user.
@@ -161,7 +144,7 @@ public final class HdfsRepository extends BlobStoreRepository {
 
         // Check to see if the authentication method is compatible
         if (kerberosPrincipal != null && authMethod.equals(AuthenticationMethod.SIMPLE)) {
-            LOGGER.warn("Hadoop authentication method is set to [SIMPLE], but a Kerberos principal is " +
+            logger.warn("Hadoop authentication method is set to [SIMPLE], but a Kerberos principal is " +
                 "specified. Continuing with [KERBEROS] authentication.");
             SecurityUtil.setAuthenticationMethod(AuthenticationMethod.KERBEROS, hadoopConfiguration);
         } else if (kerberosPrincipal == null && authMethod.equals(AuthenticationMethod.KERBEROS)) {
@@ -174,15 +157,15 @@ public final class HdfsRepository extends BlobStoreRepository {
         UserGroupInformation.setConfiguration(hadoopConfiguration);
 
         // Debugging
-        LOGGER.debug("Hadoop security enabled: [{}]", UserGroupInformation.isSecurityEnabled());
-        LOGGER.debug("Using Hadoop authentication method: [{}]", SecurityUtil.getAuthenticationMethod(hadoopConfiguration));
+        logger.debug("Hadoop security enabled: [{}]", UserGroupInformation.isSecurityEnabled());
+        logger.debug("Using Hadoop authentication method: [{}]", SecurityUtil.getAuthenticationMethod(hadoopConfiguration));
 
         // UserGroupInformation (UGI) instance is just a Hadoop specific wrapper around a Java Subject
         try {
             if (UserGroupInformation.isSecurityEnabled()) {
                 String principal = preparePrincipal(kerberosPrincipal);
                 String keytab = HdfsSecurityContext.locateKeytabFile(environment).toString();
-                LOGGER.debug("Using kerberos principal [{}] and keytab located at [{}]", principal, keytab);
+                logger.debug("Using kerberos principal [{}] and keytab located at [{}]", principal, keytab);
                 return UserGroupInformation.loginUserFromKeytabAndReturnUGI(principal, keytab);
             }
             return UserGroupInformation.getCurrentUser();
@@ -203,7 +186,7 @@ public final class HdfsRepository extends BlobStoreRepository {
             }
 
             if (originalPrincipal.equals(finalPrincipal) == false) {
-                LOGGER.debug("Found service principal. Converted original principal name [{}] to server principal [{}]",
+                logger.debug("Found service principal. Converted original principal name [{}] to server principal [{}]",
                     originalPrincipal, finalPrincipal);
             }
         }
@@ -232,16 +215,6 @@ public final class HdfsRepository extends BlobStoreRepository {
             AccessController.doPrivileged((PrivilegedAction<HdfsBlobStore>)
                 () -> createBlobstore(uri, pathSetting, getMetadata().settings()));
         return blobStore;
-    }
-
-    @Override
-    protected BlobPath basePath() {
-        return basePath;
-    }
-
-    @Override
-    protected boolean isCompress() {
-        return compress;
     }
 
     @Override

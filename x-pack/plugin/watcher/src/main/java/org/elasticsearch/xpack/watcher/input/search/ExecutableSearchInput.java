@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.watcher.input.search;
 
@@ -29,6 +30,7 @@ import org.elasticsearch.xpack.watcher.support.XContentFilterKeysUtils;
 import org.elasticsearch.xpack.watcher.support.search.WatcherSearchTemplateRequest;
 import org.elasticsearch.xpack.watcher.support.search.WatcherSearchTemplateService;
 
+import java.util.Collections;
 import java.util.Map;
 
 import static org.elasticsearch.xpack.watcher.input.search.SearchInput.TYPE;
@@ -37,10 +39,11 @@ import static org.elasticsearch.xpack.watcher.input.search.SearchInput.TYPE;
  * An input that executes search and returns the search response as the initial payload
  */
 public class ExecutableSearchInput extends ExecutableInput<SearchInput, SearchInput.Result> {
-
     public static final SearchType DEFAULT_SEARCH_TYPE = SearchType.QUERY_THEN_FETCH;
 
     private static final Logger logger = LogManager.getLogger(ExecutableSearchInput.class);
+
+    private static final Params EMPTY_PARAMS = new MapParams(Collections.emptyMap());
 
     private final Client client;
     private final WatcherSearchTemplateService searchTemplateService;
@@ -74,27 +77,34 @@ public class ExecutableSearchInput extends ExecutableInput<SearchInput, SearchIn
         }
 
         SearchRequest searchRequest = searchTemplateService.toSearchRequest(request);
+        ClientHelper.assertNoAuthorizationHeader(ctx.watch().status().getHeaders());
         final SearchResponse response = ClientHelper.executeWithHeaders(ctx.watch().status().getHeaders(), ClientHelper.WATCHER_ORIGIN,
                 client, () -> client.search(searchRequest).actionGet(timeout));
 
         if (logger.isDebugEnabled()) {
-            logger.debug("[{}] found [{}] hits", ctx.id(), response.getHits().getTotalHits());
+            logger.debug("[{}] found [{}] hits", ctx.id(), response.getHits().getTotalHits().value);
             for (SearchHit hit : response.getHits()) {
                 logger.debug("[{}] hit [{}]", ctx.id(), hit.getSourceAsMap());
             }
         }
 
         final Payload payload;
+        final Params params;
+        if (request.isRestTotalHitsAsint()) {
+            params = new MapParams(Collections.singletonMap("rest_total_hits_as_int", "true"));
+        } else {
+            params = EMPTY_PARAMS;
+        }
         if (input.getExtractKeys() != null) {
-            BytesReference bytes = XContentHelper.toXContent(response, XContentType.JSON, false);
+            BytesReference bytes = XContentHelper.toXContent(response, XContentType.JSON, params, false);
             // EMPTY is safe here because we never use namedObject
             try (XContentParser parser = XContentHelper
-                    .createParser(NamedXContentRegistry.EMPTY, LoggingDeprecationHandler.INSTANCE, bytes)) {
+                    .createParser(NamedXContentRegistry.EMPTY, LoggingDeprecationHandler.INSTANCE, bytes, XContentType.JSON)) {
                 Map<String, Object> filteredKeys = XContentFilterKeysUtils.filterMapOrdered(input.getExtractKeys(), parser);
                 payload = new Payload.Simple(filteredKeys);
             }
         } else {
-            payload = new Payload.XContent(response);
+            payload = new Payload.XContent(response, params);
         }
 
         return new SearchInput.Result(request, payload);

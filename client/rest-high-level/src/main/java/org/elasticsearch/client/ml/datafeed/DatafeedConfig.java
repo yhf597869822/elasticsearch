@@ -1,23 +1,13 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 package org.elasticsearch.client.ml.datafeed;
 
+import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.client.ml.job.config.Job;
 import org.elasticsearch.common.ParseField;
 import org.elasticsearch.common.bytes.BytesArray;
@@ -40,6 +30,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -56,12 +47,14 @@ public class DatafeedConfig implements ToXContentObject {
     public static final ParseField FREQUENCY = new ParseField("frequency");
     public static final ParseField INDEXES = new ParseField("indexes");
     public static final ParseField INDICES = new ParseField("indices");
-    public static final ParseField TYPES = new ParseField("types");
     public static final ParseField QUERY = new ParseField("query");
     public static final ParseField SCROLL_SIZE = new ParseField("scroll_size");
     public static final ParseField AGGREGATIONS = new ParseField("aggregations");
     public static final ParseField SCRIPT_FIELDS = new ParseField("script_fields");
     public static final ParseField CHUNKING_CONFIG = new ParseField("chunking_config");
+    public static final ParseField DELAYED_DATA_CHECK_CONFIG = new ParseField("delayed_data_check_config");
+    public static final ParseField MAX_EMPTY_SEARCHES = new ParseField("max_empty_searches");
+    public static final ParseField INDICES_OPTIONS = new ParseField("indices_options");
 
     public static final ConstructingObjectParser<Builder, Void> PARSER = new ConstructingObjectParser<>(
         "datafeed_config", true, a -> new Builder((String)a[0], (String)a[1]));
@@ -72,7 +65,6 @@ public class DatafeedConfig implements ToXContentObject {
 
         PARSER.declareStringArray(Builder::setIndices, INDEXES);
         PARSER.declareStringArray(Builder::setIndices, INDICES);
-        PARSER.declareStringArray(Builder::setTypes, TYPES);
         PARSER.declareString((builder, val) ->
             builder.setQueryDelay(TimeValue.parseTimeValue(val, QUERY_DELAY.getPreferredName())), QUERY_DELAY);
         PARSER.declareString((builder, val) ->
@@ -88,6 +80,12 @@ public class DatafeedConfig implements ToXContentObject {
         }, SCRIPT_FIELDS);
         PARSER.declareInt(Builder::setScrollSize, SCROLL_SIZE);
         PARSER.declareObject(Builder::setChunkingConfig, ChunkingConfig.PARSER, CHUNKING_CONFIG);
+        PARSER.declareObject(Builder::setDelayedDataCheckConfig, DelayedDataCheckConfig.PARSER, DELAYED_DATA_CHECK_CONFIG);
+        PARSER.declareInt(Builder::setMaxEmptySearches, MAX_EMPTY_SEARCHES);
+        PARSER.declareObject(Builder::setIndicesOptions,
+            (p, c) -> IndicesOptions.fromMap(p.map(), new IndicesOptions(IndicesOptions.Option.NONE, IndicesOptions.WildcardStates.NONE)),
+            INDICES_OPTIONS);
+        PARSER.declareObject(Builder::setRuntimeMappings, (p, c) -> p.map(), SearchSourceBuilder.RUNTIME_MAPPINGS_FIELD);
     }
 
     private static BytesReference parseBytes(XContentParser parser) throws IOException {
@@ -101,27 +99,34 @@ public class DatafeedConfig implements ToXContentObject {
     private final TimeValue queryDelay;
     private final TimeValue frequency;
     private final List<String> indices;
-    private final List<String> types;
     private final BytesReference query;
     private final BytesReference aggregations;
     private final List<SearchSourceBuilder.ScriptField> scriptFields;
     private final Integer scrollSize;
     private final ChunkingConfig chunkingConfig;
+    private final DelayedDataCheckConfig delayedDataCheckConfig;
+    private final Integer maxEmptySearches;
+    private final IndicesOptions indicesOptions;
+    private final Map<String, Object> runtimeMappings;
 
-    private DatafeedConfig(String id, String jobId, TimeValue queryDelay, TimeValue frequency, List<String> indices, List<String> types,
-                           BytesReference query, BytesReference aggregations, List<SearchSourceBuilder.ScriptField> scriptFields,
-                           Integer scrollSize, ChunkingConfig chunkingConfig) {
+    private DatafeedConfig(String id, String jobId, TimeValue queryDelay, TimeValue frequency, List<String> indices, BytesReference query,
+                           BytesReference aggregations, List<SearchSourceBuilder.ScriptField> scriptFields, Integer scrollSize,
+                           ChunkingConfig chunkingConfig, DelayedDataCheckConfig delayedDataCheckConfig,
+                           Integer maxEmptySearches, IndicesOptions indicesOptions, Map<String, Object> runtimeMappings) {
         this.id = id;
         this.jobId = jobId;
         this.queryDelay = queryDelay;
         this.frequency = frequency;
         this.indices = indices == null ? null : Collections.unmodifiableList(indices);
-        this.types = types == null ? null : Collections.unmodifiableList(types);
         this.query = query;
         this.aggregations = aggregations;
         this.scriptFields = scriptFields == null ? null : Collections.unmodifiableList(scriptFields);
         this.scrollSize = scrollSize;
         this.chunkingConfig = chunkingConfig;
+        this.delayedDataCheckConfig = delayedDataCheckConfig;
+        this.maxEmptySearches = maxEmptySearches;
+        this.indicesOptions = indicesOptions;
+        this.runtimeMappings = Collections.unmodifiableMap(runtimeMappings);
     }
 
     public String getId() {
@@ -144,10 +149,6 @@ public class DatafeedConfig implements ToXContentObject {
         return indices;
     }
 
-    public List<String> getTypes() {
-        return types;
-    }
-
     public Integer getScrollSize() {
         return scrollSize;
     }
@@ -168,6 +169,22 @@ public class DatafeedConfig implements ToXContentObject {
         return chunkingConfig;
     }
 
+    public DelayedDataCheckConfig getDelayedDataCheckConfig() {
+        return delayedDataCheckConfig;
+    }
+
+    public Integer getMaxEmptySearches() {
+        return maxEmptySearches;
+    }
+
+    public IndicesOptions getIndicesOptions() {
+        return indicesOptions;
+    }
+
+    public Map<String, Object> getRuntimeMappings() {
+        return runtimeMappings;
+    }
+
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject();
@@ -181,9 +198,6 @@ public class DatafeedConfig implements ToXContentObject {
         }
         if (indices != null) {
             builder.field(INDICES.getPreferredName(), indices);
-        }
-        if (types != null) {
-            builder.field(TYPES.getPreferredName(), types);
         }
         if (query != null) {
             builder.field(QUERY.getPreferredName(), asMap(query));
@@ -203,6 +217,20 @@ public class DatafeedConfig implements ToXContentObject {
         }
         if (chunkingConfig != null) {
             builder.field(CHUNKING_CONFIG.getPreferredName(), chunkingConfig);
+        }
+        if (delayedDataCheckConfig != null) {
+            builder.field(DELAYED_DATA_CHECK_CONFIG.getPreferredName(), delayedDataCheckConfig);
+        }
+        if (maxEmptySearches != null) {
+            builder.field(MAX_EMPTY_SEARCHES.getPreferredName(), maxEmptySearches);
+        }
+        if (indicesOptions != null) {
+            builder.startObject(INDICES_OPTIONS.getPreferredName());
+            indicesOptions.toXContent(builder, params);
+            builder.endObject();
+        }
+        if (runtimeMappings.isEmpty() == false) {
+            builder.field(SearchSourceBuilder.RUNTIME_MAPPINGS_FIELD.getPreferredName(), runtimeMappings);
         }
 
         builder.endObject();
@@ -239,12 +267,15 @@ public class DatafeedConfig implements ToXContentObject {
             && Objects.equals(this.frequency, that.frequency)
             && Objects.equals(this.queryDelay, that.queryDelay)
             && Objects.equals(this.indices, that.indices)
-            && Objects.equals(this.types, that.types)
             && Objects.equals(asMap(this.query), asMap(that.query))
             && Objects.equals(this.scrollSize, that.scrollSize)
             && Objects.equals(asMap(this.aggregations), asMap(that.aggregations))
             && Objects.equals(this.scriptFields, that.scriptFields)
-            && Objects.equals(this.chunkingConfig, that.chunkingConfig);
+            && Objects.equals(this.chunkingConfig, that.chunkingConfig)
+            && Objects.equals(this.delayedDataCheckConfig, that.delayedDataCheckConfig)
+            && Objects.equals(this.maxEmptySearches, that.maxEmptySearches)
+            && Objects.equals(this.indicesOptions, that.indicesOptions)
+            && Objects.equals(this.runtimeMappings, that.runtimeMappings);
     }
 
     /**
@@ -254,8 +285,8 @@ public class DatafeedConfig implements ToXContentObject {
      */
     @Override
     public int hashCode() {
-        return Objects.hash(id, jobId, frequency, queryDelay, indices, types, asMap(query), scrollSize, asMap(aggregations), scriptFields,
-            chunkingConfig);
+        return Objects.hash(id, jobId, frequency, queryDelay, indices, asMap(query), scrollSize, asMap(aggregations), scriptFields,
+            chunkingConfig, delayedDataCheckConfig, maxEmptySearches, indicesOptions, runtimeMappings);
     }
 
     public static Builder builder(String id, String jobId) {
@@ -264,17 +295,20 @@ public class DatafeedConfig implements ToXContentObject {
 
     public static class Builder {
 
-        private String id;
-        private String jobId;
+        private final String id;
+        private final String jobId;
         private TimeValue queryDelay;
         private TimeValue frequency;
         private List<String> indices;
-        private List<String> types;
         private BytesReference query;
         private BytesReference aggregations;
         private List<SearchSourceBuilder.ScriptField> scriptFields;
         private Integer scrollSize;
         private ChunkingConfig chunkingConfig;
+        private DelayedDataCheckConfig delayedDataCheckConfig;
+        private Integer maxEmptySearches;
+        private IndicesOptions indicesOptions;
+        private Map<String, Object> runtimeMappings = Collections.emptyMap();
 
         public Builder(String id, String jobId) {
             this.id = Objects.requireNonNull(id, ID.getPreferredName());
@@ -286,13 +320,16 @@ public class DatafeedConfig implements ToXContentObject {
             this.jobId = config.jobId;
             this.queryDelay = config.queryDelay;
             this.frequency = config.frequency;
-            this.indices = config.indices;
-            this.types = config.types;
+            this.indices = config.indices == null ? null : new ArrayList<>(config.indices);
             this.query = config.query;
             this.aggregations = config.aggregations;
-            this.scriptFields = config.scriptFields;
+            this.scriptFields = config.scriptFields == null ? null : new ArrayList<>(config.scriptFields);
             this.scrollSize = config.scrollSize;
             this.chunkingConfig = config.chunkingConfig;
+            this.delayedDataCheckConfig = config.getDelayedDataCheckConfig();
+            this.maxEmptySearches = config.getMaxEmptySearches();
+            this.indicesOptions = config.indicesOptions;
+            this.runtimeMappings = new HashMap<>(config.runtimeMappings);
         }
 
         public Builder setIndices(List<String> indices) {
@@ -302,11 +339,6 @@ public class DatafeedConfig implements ToXContentObject {
 
         public Builder setIndices(String... indices) {
             return setIndices(Arrays.asList(indices));
-        }
-
-        public Builder setTypes(List<String> types) {
-            this.types = types;
-            return this;
         }
 
         public Builder setQueryDelay(TimeValue queryDelay) {
@@ -366,9 +398,39 @@ public class DatafeedConfig implements ToXContentObject {
             return this;
         }
 
+        /**
+         * This sets the {@link DelayedDataCheckConfig} settings.
+         *
+         * See {@link DelayedDataCheckConfig} for more information.
+         *
+         * @param delayedDataCheckConfig the delayed data check configuration
+         *                               Default value is enabled, with `check_window` being null. This means the true window is
+         *                               calculated when the real-time Datafeed runs.
+         */
+        public Builder setDelayedDataCheckConfig(DelayedDataCheckConfig delayedDataCheckConfig) {
+            this.delayedDataCheckConfig = delayedDataCheckConfig;
+            return this;
+        }
+
+        public Builder setMaxEmptySearches(int maxEmptySearches) {
+            this.maxEmptySearches = maxEmptySearches;
+            return this;
+        }
+
+        public Builder setIndicesOptions(IndicesOptions indicesOptions) {
+            this.indicesOptions = indicesOptions;
+            return this;
+        }
+
+        public Builder setRuntimeMappings(Map<String, Object> runtimeMappings) {
+            this.runtimeMappings = Objects.requireNonNull(runtimeMappings,
+                SearchSourceBuilder.RUNTIME_MAPPINGS_FIELD.getPreferredName());
+            return this;
+        }
+
         public DatafeedConfig build() {
-            return new DatafeedConfig(id, jobId, queryDelay, frequency, indices, types, query, aggregations, scriptFields, scrollSize,
-                chunkingConfig);
+            return new DatafeedConfig(id, jobId, queryDelay, frequency, indices, query, aggregations, scriptFields, scrollSize,
+                chunkingConfig, delayedDataCheckConfig, maxEmptySearches, indicesOptions, runtimeMappings);
         }
 
         private static BytesReference xContentToBytes(ToXContentObject object) throws IOException {

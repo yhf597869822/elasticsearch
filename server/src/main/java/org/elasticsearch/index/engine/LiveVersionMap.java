@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.index.engine;
@@ -40,8 +29,9 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
 
     private static final class VersionLookup {
 
-        /** Tracks bytes used by current map, i.e. what is freed on refresh. For deletes, which are also added to tombstones, we only account
-         *  for the CHM entry here, and account for BytesRef/VersionValue against the tombstones, since refresh would not clear this RAM. */
+        /** Tracks bytes used by current map, i.e. what is freed on refresh. For deletes, which are also added to tombstones,
+         *  we only account for the CHM entry here, and account for BytesRef/VersionValue against the tombstones, since refresh would not
+         *  clear this RAM. */
         final AtomicLong ramBytesUsed = new AtomicLong();
 
         private static final VersionLookup EMPTY = new VersionLookup(Collections.emptyMap());
@@ -123,7 +113,8 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         }
 
         Maps() {
-            this(new VersionLookup(ConcurrentCollections.newConcurrentMapWithAggressiveConcurrency()), VersionLookup.EMPTY, false);
+            this(new VersionLookup(ConcurrentCollections.newConcurrentMapWithAggressiveConcurrency()),
+                VersionLookup.EMPTY, false);
         }
 
         boolean isSafeAccessMode() {
@@ -232,7 +223,7 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
     /**
      * Tracks bytes used by tombstones (deletes)
      */
-    final AtomicLong ramBytesUsedTombstones = new AtomicLong();
+    private final AtomicLong ramBytesUsedTombstones = new AtomicLong();
 
     @Override
     public void beforeRefresh() throws IOException {
@@ -252,8 +243,8 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         // means Lucene did not actually open a new reader because it detected no changes, it's possible old has some entries in it, which
         // is fine: it means they were actually already included in the previously opened reader, so we can still safely drop them in that
         // case.  This is because we assign new maps (in beforeRefresh) slightly before Lucene actually flushes any segments for the
-        // reopen, and so any concurrent indexing requests can still sneak in a few additions to that current map that are in fact reflected
-        // in the previous reader.   We don't touch tombstones here: they expire on their own index.gc_deletes timeframe:
+        // reopen, and so any concurrent indexing requests can still sneak in a few additions to that current map that are in fact
+        // reflected in the previous reader.   We don't touch tombstones here: they expire on their own index.gc_deletes timeframe:
 
         maps = maps.invalidateOldMap();
         assert (unsafeKeysMap = unsafeKeysMap.invalidateOldMap()) != null;
@@ -416,8 +407,8 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         maps = new Maps();
         tombstones.clear();
         // NOTE: we can't zero this here, because a refresh thread could be calling InternalEngine.pruneDeletedTombstones at the same time,
-        // and this will lead to an assert trip.  Presumably it's fine if our ramBytesUsedTombstones is non-zero after clear since the index
-        // is being closed:
+        // and this will lead to an assert trip.  Presumably it's fine if our ramBytesUsedTombstones is non-zero after clear since the
+        // index is being closed:
         //ramBytesUsedTombstones.set(0);
     }
 
@@ -455,7 +446,8 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         return maps.current.map;
     }
 
-    /** Iterates over all deleted versions, including new ones (not yet exposed via reader) and old ones (exposed via reader but not yet GC'd). */
+    /** Iterates over all deleted versions, including new ones (not yet exposed via reader) and old ones
+     *  (exposed via reader but not yet GC'd). */
     Map<BytesRef, DeleteVersionValue> getAllTombstones() {
         return tombstones;
     }
@@ -471,7 +463,8 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
     }
 
     boolean assertKeyedLockHeldByCurrentThread(BytesRef uid) {
-        assert keyedLock.isHeldByCurrentThread(uid) : "Thread [" + Thread.currentThread().getName() + "], uid [" + uid.utf8ToString() + "]";
+        assert keyedLock.isHeldByCurrentThread(uid) : "Thread [" + Thread.currentThread().getName() +
+            "], uid [" + uid.utf8ToString() + "]";
         return true;
     }
 }

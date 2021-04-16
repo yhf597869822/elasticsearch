@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.action.termvectors;
@@ -38,20 +27,33 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 
-public class MultiTermVectorsRequest extends ActionRequest implements Iterable<TermVectorsRequest>, CompositeIndicesRequest, RealtimeRequest {
+public class MultiTermVectorsRequest extends ActionRequest
+        implements Iterable<TermVectorsRequest>, CompositeIndicesRequest, RealtimeRequest {
 
     String preference;
     List<TermVectorsRequest> requests = new ArrayList<>();
 
     final Set<String> ids = new HashSet<>();
 
+    public MultiTermVectorsRequest(StreamInput in) throws IOException {
+        super(in);
+        preference = in.readOptionalString();
+        int size = in.readVInt();
+        requests = new ArrayList<>(size);
+        for (int i = 0; i < size; i++) {
+            requests.add(new TermVectorsRequest(in));
+        }
+    }
+
+    public MultiTermVectorsRequest() {}
+
     public MultiTermVectorsRequest add(TermVectorsRequest termVectorsRequest) {
         requests.add(termVectorsRequest);
         return this;
     }
 
-    public MultiTermVectorsRequest add(String index, @Nullable String type, String id) {
-        requests.add(new TermVectorsRequest(index, type, id));
+    public MultiTermVectorsRequest add(String index, String id) {
+        requests.add(new TermVectorsRequest(index, id));
         return this;
     }
 
@@ -105,7 +107,7 @@ public class MultiTermVectorsRequest extends ActionRequest implements Iterable<T
                         }
                     } else if ("ids".equals(currentFieldName)) {
                         while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
-                            if (!token.isValue()) {
+                            if (token.isValue() == false) {
                                 throw new IllegalArgumentException("ids array element should only contain ids");
                             }
                             ids.add(parser.text());
@@ -132,24 +134,10 @@ public class MultiTermVectorsRequest extends ActionRequest implements Iterable<T
     }
 
     @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
-        preference = in.readOptionalString();
-        int size = in.readVInt();
-        requests = new ArrayList<>(size);
-        for (int i = 0; i < size; i++) {
-            requests.add(TermVectorsRequest.readTermVectorsRequest(in));
-        }
-    }
-
-    @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
         out.writeOptionalString(preference);
-        out.writeVInt(requests.size());
-        for (TermVectorsRequest termVectorsRequest : requests) {
-            termVectorsRequest.writeTo(out);
-        }
+        out.writeCollection(requests);
     }
 
     public void ids(String[] ids) {
@@ -163,6 +151,7 @@ public class MultiTermVectorsRequest extends ActionRequest implements Iterable<T
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public MultiTermVectorsRequest realtime(boolean realtime) {
         for (TermVectorsRequest request : requests) {
             request.realtime(realtime);

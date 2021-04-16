@@ -1,3 +1,10 @@
+/*
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
+ */
 package org.elasticsearch.gradle;
 
 import java.io.IOException;
@@ -10,12 +17,35 @@ import java.util.Properties;
  * Accessor for shared dependency versions used by elasticsearch, namely the elasticsearch and lucene versions.
  */
 public class VersionProperties {
+
     public static String getElasticsearch() {
         return elasticsearch;
     }
 
+    public static Version getElasticsearchVersion() {
+        return Version.fromString(elasticsearch);
+    }
+
     public static String getLucene() {
         return lucene;
+    }
+
+    public static String getBundledJdk(final String platform) {
+        switch (platform) {
+            case "darwin": // fall trough
+            case "mac":
+                return bundledJdkDarwin;
+            case "linux":
+                return bundledJdkLinux;
+            case "windows":
+                return bundledJdkWindows;
+            default:
+                throw new IllegalArgumentException("unknown platform [" + platform + "]");
+        }
+    }
+
+    public static String getBundledJdkVendor() {
+        return bundledJdkVendor;
     }
 
     public static Map<String, String> getVersions() {
@@ -24,11 +54,22 @@ public class VersionProperties {
 
     private static final String elasticsearch;
     private static final String lucene;
+    private static final String bundledJdkDarwin;
+    private static final String bundledJdkLinux;
+    private static final String bundledJdkWindows;
+    private static final String bundledJdkVendor;
     private static final Map<String, String> versions = new HashMap<String, String>();
+
     static {
         Properties props = getVersionProperties();
         elasticsearch = props.getProperty("elasticsearch");
         lucene = props.getProperty("lucene");
+        bundledJdkVendor = props.getProperty("bundled_jdk_vendor");
+        final String bundledJdk = props.getProperty("bundled_jdk");
+        bundledJdkDarwin = props.getProperty("bundled_jdk_darwin", bundledJdk);
+        bundledJdkLinux = props.getProperty("bundled_jdk_linux", bundledJdk);
+        bundledJdkWindows = props.getProperty("bundled_jdk_windows", bundledJdk);
+
         for (String property : props.stringPropertyNames()) {
             versions.put(property, props.getProperty(property));
         }

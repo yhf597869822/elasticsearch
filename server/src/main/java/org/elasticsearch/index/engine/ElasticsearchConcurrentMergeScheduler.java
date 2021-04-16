@@ -1,27 +1,15 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.index.engine;
 
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.index.ConcurrentMergeScheduler;
-import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.MergePolicy;
 import org.apache.lucene.index.MergeScheduler;
 import org.apache.lucene.index.OneMergeHelper;
@@ -80,7 +68,7 @@ class ElasticsearchConcurrentMergeScheduler extends ConcurrentMergeScheduler {
     }
 
     @Override
-    protected void doMerge(IndexWriter writer, MergePolicy.OneMerge merge) throws IOException {
+    protected void doMerge(MergeSource mergeSource, MergePolicy.OneMerge merge) throws IOException {
         int totalNumDocs = merge.totalNumDocs();
         long totalSizeInBytes = merge.totalBytesSize();
         long timeNS = System.nanoTime();
@@ -92,11 +80,13 @@ class ElasticsearchConcurrentMergeScheduler extends ConcurrentMergeScheduler {
         onGoingMerges.add(onGoingMerge);
 
         if (logger.isTraceEnabled()) {
-            logger.trace("merge [{}] starting..., merging [{}] segments, [{}] docs, [{}] size, into [{}] estimated_size", OneMergeHelper.getSegmentName(merge), merge.segments.size(), totalNumDocs, new ByteSizeValue(totalSizeInBytes), new ByteSizeValue(merge.estimatedMergeBytes));
+            logger.trace("merge [{}] starting..., merging [{}] segments, [{}] docs, [{}] size, into [{}] estimated_size",
+                OneMergeHelper.getSegmentName(merge), merge.segments.size(), totalNumDocs, new ByteSizeValue(totalSizeInBytes),
+                new ByteSizeValue(merge.estimatedMergeBytes));
         }
         try {
             beforeMerge(onGoingMerge);
-            super.doMerge(writer, merge);
+            super.doMerge(mergeSource, merge);
         } finally {
             long tookMS = TimeValue.nsecToMSec(System.nanoTime() - timeNS);
 
@@ -123,7 +113,8 @@ class ElasticsearchConcurrentMergeScheduler extends ConcurrentMergeScheduler {
             totalMergeThrottledTime.inc(throttledMS);
 
             String message = String.format(Locale.ROOT,
-                                           "merge segment [%s] done: took [%s], [%,.1f MB], [%,d docs], [%s stopped], [%s throttled], [%,.1f MB written], [%,.1f MB/sec throttle]",
+                                           "merge segment [%s] done: took [%s], [%,.1f MB], [%,d docs], [%s stopped], " +
+                                               "[%s throttled], [%,.1f MB written], [%,.1f MB/sec throttle]",
                                            OneMergeHelper.getSegmentName(merge),
                                            TimeValue.timeValueMillis(tookMS),
                                            totalSizeInBytes/1024f/1024f,
@@ -159,15 +150,16 @@ class ElasticsearchConcurrentMergeScheduler extends ConcurrentMergeScheduler {
     }
 
     @Override
-    protected boolean maybeStall(IndexWriter writer) {
+    protected boolean maybeStall(MergeSource mergeSource) {
         // Don't stall here, because we do our own index throttling (in InternalEngine.IndexThrottle) when merges can't keep up
         return true;
     }
 
     @Override
-    protected MergeThread getMergeThread(IndexWriter writer, MergePolicy.OneMerge merge) throws IOException {
-        MergeThread thread = super.getMergeThread(writer, merge);
-        thread.setName(EsExecutors.threadName(indexSettings, "[" + shardId.getIndexName() + "][" + shardId.id() + "]: " + thread.getName()));
+    protected MergeThread getMergeThread(MergeSource mergeSource, MergePolicy.OneMerge merge) throws IOException {
+        MergeThread thread = super.getMergeThread(mergeSource, merge);
+        thread.setName(EsExecutors.threadName(indexSettings, "[" + shardId.getIndexName() + "][" + shardId.id() + "]: " +
+            thread.getName()));
         return thread;
     }
 

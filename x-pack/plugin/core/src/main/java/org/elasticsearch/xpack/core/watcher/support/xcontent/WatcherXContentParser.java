@@ -1,12 +1,15 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.core.watcher.support.xcontent;
 
 import org.elasticsearch.ElasticsearchParseException;
+import org.elasticsearch.common.CheckedFunction;
 import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.RestApiVersion;
 import org.elasticsearch.common.xcontent.DeprecationHandler;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.XContentLocation;
@@ -14,13 +17,14 @@ import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.xpack.core.watcher.common.secret.Secret;
 import org.elasticsearch.xpack.core.watcher.crypto.CryptoService;
-import org.joda.time.DateTime;
 
 import java.io.IOException;
 import java.nio.CharBuffer;
 import java.time.Clock;
+import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * A xcontent parser that is used by watcher. This is a special parser that is
@@ -63,12 +67,12 @@ public class WatcherXContentParser implements XContentParser {
         return new Secret(chars);
     }
 
-    private final DateTime parseTime;
+    private final ZonedDateTime parseTime;
     private final XContentParser parser;
     @Nullable private final CryptoService cryptoService;
     private final boolean allowRedactedPasswords;
 
-    public WatcherXContentParser(XContentParser parser, DateTime parseTime, @Nullable CryptoService cryptoService,
+    public WatcherXContentParser(XContentParser parser, ZonedDateTime parseTime, @Nullable CryptoService cryptoService,
                                  boolean allowRedactedPasswords) {
         this.parseTime = parseTime;
         this.parser = parser;
@@ -76,7 +80,7 @@ public class WatcherXContentParser implements XContentParser {
         this.allowRedactedPasswords = allowRedactedPasswords;
     }
 
-    public DateTime getParseDateTime() { return parseTime; }
+    public ZonedDateTime getParseDateTime() { return parseTime; }
 
     @Override
     public XContentType contentType() {
@@ -119,8 +123,9 @@ public class WatcherXContentParser implements XContentParser {
     }
 
     @Override
-    public Map<String, String> mapStringsOrdered() throws IOException {
-        return parser.mapStringsOrdered();
+    public <T> Map<String, T> map(
+            Supplier<Map<String, T>> mapFactory, CheckedFunction<XContentParser, T, IOException> mapValueParser) throws IOException {
+        return parser.map(mapFactory, mapValueParser);
     }
 
     @Override
@@ -281,6 +286,11 @@ public class WatcherXContentParser implements XContentParser {
     @Override
     public void close() throws IOException {
         parser.close();
+    }
+
+    @Override
+    public RestApiVersion getRestApiVersion() {
+        return RestApiVersion.current();
     }
 
     @Override

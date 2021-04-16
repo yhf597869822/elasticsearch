@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 
 package org.elasticsearch.xpack.sql.proto;
@@ -12,10 +13,29 @@ import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import java.io.IOException;
-import java.util.Collections;
+import java.time.ZoneId;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
-import java.util.TimeZone;
+
+import static java.util.Collections.emptyList;
+import static java.util.Collections.emptyMap;
+import static org.elasticsearch.xpack.sql.proto.Protocol.BINARY_FORMAT_NAME;
+import static org.elasticsearch.xpack.sql.proto.Protocol.CLIENT_ID_NAME;
+import static org.elasticsearch.xpack.sql.proto.Protocol.COLUMNAR_NAME;
+import static org.elasticsearch.xpack.sql.proto.Protocol.CURSOR_NAME;
+import static org.elasticsearch.xpack.sql.proto.Protocol.FETCH_SIZE_NAME;
+import static org.elasticsearch.xpack.sql.proto.Protocol.FIELD_MULTI_VALUE_LENIENCY_NAME;
+import static org.elasticsearch.xpack.sql.proto.Protocol.FILTER_NAME;
+import static org.elasticsearch.xpack.sql.proto.Protocol.INDEX_INCLUDE_FROZEN_NAME;
+import static org.elasticsearch.xpack.sql.proto.Protocol.MODE_NAME;
+import static org.elasticsearch.xpack.sql.proto.Protocol.PAGE_TIMEOUT_NAME;
+import static org.elasticsearch.xpack.sql.proto.Protocol.PARAMS_NAME;
+import static org.elasticsearch.xpack.sql.proto.Protocol.QUERY_NAME;
+import static org.elasticsearch.xpack.sql.proto.Protocol.REQUEST_TIMEOUT_NAME;
+import static org.elasticsearch.xpack.sql.proto.Protocol.RUNTIME_MAPPINGS_NAME;
+import static org.elasticsearch.xpack.sql.proto.Protocol.TIME_ZONE_NAME;
+import static org.elasticsearch.xpack.sql.proto.Protocol.VERSION_NAME;
 
 /**
  * Sql query request for JDBC/CLI client
@@ -24,37 +44,45 @@ public class SqlQueryRequest extends AbstractSqlRequest {
     @Nullable
     private final String cursor;
     private final String query;
-    private final TimeZone timeZone;
+    private final ZoneId zoneId;
     private final int fetchSize;
     private final TimeValue requestTimeout;
     private final TimeValue pageTimeout;
     @Nullable
     private final ToXContent filter;
+    private final Boolean columnar;
     private final List<SqlTypedParamValue> params;
+    private final boolean fieldMultiValueLeniency;
+    private final boolean indexIncludeFrozen;
+    private final Boolean binaryCommunication;
+    @Nullable
+    private final Map<String, Object> runtimeMappings;
 
-
-    public SqlQueryRequest(Mode mode, String query, List<SqlTypedParamValue> params, TimeZone timeZone,
-                           int fetchSize, TimeValue requestTimeout, TimeValue pageTimeout, ToXContent filter, String cursor) {
-        super(mode);
+    public SqlQueryRequest(String query, List<SqlTypedParamValue> params, ZoneId zoneId, int fetchSize,
+                           TimeValue requestTimeout, TimeValue pageTimeout, ToXContent filter, Boolean columnar,
+                           String cursor, RequestInfo requestInfo, boolean fieldMultiValueLeniency, boolean indexIncludeFrozen,
+                           Boolean binaryCommunication, Map<String, Object> runtimeMappings) {
+        super(requestInfo);
         this.query = query;
         this.params = params;
-        this.timeZone = timeZone;
+        this.zoneId = zoneId;
         this.fetchSize = fetchSize;
         this.requestTimeout = requestTimeout;
         this.pageTimeout = pageTimeout;
         this.filter = filter;
+        this.columnar = columnar;
         this.cursor = cursor;
+        this.fieldMultiValueLeniency = fieldMultiValueLeniency;
+        this.indexIncludeFrozen = indexIncludeFrozen;
+        this.binaryCommunication = binaryCommunication;
+        this.runtimeMappings = runtimeMappings;
     }
 
-    public SqlQueryRequest(Mode mode, String query, List<SqlTypedParamValue> params, ToXContent filter, TimeZone timeZone,
-                           int fetchSize, TimeValue requestTimeout, TimeValue pageTimeout) {
-        this(mode, query, params, timeZone, fetchSize, requestTimeout, pageTimeout, filter, null);
+    public SqlQueryRequest(String cursor, TimeValue requestTimeout, TimeValue pageTimeout, RequestInfo requestInfo,
+                           boolean binaryCommunication) {
+        this("", emptyList(), Protocol.TIME_ZONE, Protocol.FETCH_SIZE, requestTimeout, pageTimeout, null, false,
+                cursor, requestInfo, Protocol.FIELD_MULTI_VALUE_LENIENCY, Protocol.INDEX_INCLUDE_FROZEN, binaryCommunication, emptyMap());
     }
-
-    public SqlQueryRequest(Mode mode, String cursor, TimeValue requestTimeout, TimeValue pageTimeout) {
-        this(mode, "", Collections.emptyList(), Protocol.TIME_ZONE, Protocol.FETCH_SIZE, requestTimeout, pageTimeout, null, cursor);
-    }
-
 
     /**
      * The key that must be sent back to SQL to access the next page of
@@ -81,8 +109,8 @@ public class SqlQueryRequest extends AbstractSqlRequest {
     /**
      * The client's time zone
      */
-    public TimeZone timeZone() {
-        return timeZone;
+    public ZoneId zoneId() {
+        return zoneId;
     }
 
 
@@ -114,59 +142,116 @@ public class SqlQueryRequest extends AbstractSqlRequest {
         return filter;
     }
 
+    /**
+     * Optional setting for returning the result values in a columnar fashion (as opposed to rows of values).
+     * Each column will have all its values in a list. Defaults to false.
+     */
+    public Boolean columnar() {
+        return columnar;
+    }
+
+    public boolean fieldMultiValueLeniency() {
+        return fieldMultiValueLeniency;
+    }
+
+    public boolean indexIncludeFrozen() {
+        return indexIncludeFrozen;
+    }
+
+    public Boolean binaryCommunication() {
+        return binaryCommunication;
+    }
+
+    public Map<String, Object> runtimeMappings() {
+        return runtimeMappings;
+    }
+
     @Override
     public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        if (!super.equals(o)) return false;
+        if (this == o) {
+            return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
+        if (super.equals(o) == false) {
+            return false;
+        }
         SqlQueryRequest that = (SqlQueryRequest) o;
-        return fetchSize == that.fetchSize &&
-            Objects.equals(query, that.query) &&
-            Objects.equals(params, that.params) &&
-            Objects.equals(timeZone, that.timeZone) &&
-            Objects.equals(requestTimeout, that.requestTimeout) &&
-            Objects.equals(pageTimeout, that.pageTimeout) &&
-            Objects.equals(filter, that.filter) &&
-            Objects.equals(cursor, that.cursor);
+        return fetchSize == that.fetchSize
+                && Objects.equals(query, that.query)
+                && Objects.equals(params, that.params)
+                && Objects.equals(zoneId, that.zoneId)
+                && Objects.equals(requestTimeout, that.requestTimeout)
+                && Objects.equals(pageTimeout, that.pageTimeout)
+                && Objects.equals(filter, that.filter)
+                && Objects.equals(columnar,  that.columnar)
+                && Objects.equals(cursor, that.cursor)
+                && fieldMultiValueLeniency == that.fieldMultiValueLeniency
+                && indexIncludeFrozen == that.indexIncludeFrozen
+                && Objects.equals(binaryCommunication,  that.binaryCommunication)
+                && Objects.equals(runtimeMappings, that.runtimeMappings);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(super.hashCode(), query, timeZone, fetchSize, requestTimeout, pageTimeout, filter, cursor);
+        return Objects.hash(super.hashCode(), query, zoneId, fetchSize, requestTimeout, pageTimeout,
+                filter, columnar, cursor, fieldMultiValueLeniency, indexIncludeFrozen, binaryCommunication, runtimeMappings);
     }
 
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         if (query != null) {
-            builder.field("query", query);
+            builder.field(QUERY_NAME, query);
         }
-        if (this.params.isEmpty() == false) {
-            builder.startArray("params");
+        builder.field(MODE_NAME, mode().toString());
+        if (clientId() != null) {
+            builder.field(CLIENT_ID_NAME, clientId());
+        }
+        if (version() != null) {
+            builder.field(VERSION_NAME, version().toString());
+        }
+        if (this.params != null && this.params.isEmpty() == false) {
+            builder.startArray(PARAMS_NAME);
             for (SqlTypedParamValue val : this.params) {
                 val.toXContent(builder, params);
             }
             builder.endArray();
         }
-        if (timeZone != null) {
-            builder.field("time_zone", timeZone.getID());
+        if (zoneId != null) {
+            builder.field(TIME_ZONE_NAME, zoneId.getId());
         }
         if (fetchSize != Protocol.FETCH_SIZE) {
-            builder.field("fetch_size", fetchSize);
+            builder.field(FETCH_SIZE_NAME, fetchSize);
         }
         if (requestTimeout != Protocol.REQUEST_TIMEOUT) {
-            builder.field("request_timeout", requestTimeout.getStringRep());
+            builder.field(REQUEST_TIMEOUT_NAME, requestTimeout.getStringRep());
         }
         if (pageTimeout != Protocol.PAGE_TIMEOUT) {
-            builder.field("page_timeout", pageTimeout.getStringRep());
+            builder.field(PAGE_TIMEOUT_NAME, pageTimeout.getStringRep());
         }
         if (filter != null) {
-            builder.field("filter");
+            builder.field(FILTER_NAME);
             filter.toXContent(builder, params);
         }
+        if (columnar != null) {
+            builder.field(COLUMNAR_NAME, columnar);
+        }
+        if (fieldMultiValueLeniency) {
+            builder.field(FIELD_MULTI_VALUE_LENIENCY_NAME, fieldMultiValueLeniency);
+        }
+        if (indexIncludeFrozen) {
+            builder.field(INDEX_INCLUDE_FROZEN_NAME, indexIncludeFrozen);
+        }
+        if (binaryCommunication != null) {
+            builder.field(BINARY_FORMAT_NAME, binaryCommunication);
+        }
         if (cursor != null) {
-            builder.field("cursor", cursor);
+            builder.field(CURSOR_NAME, cursor);
+        }
+        if (runtimeMappings.isEmpty() == false) {
+            builder.field(RUNTIME_MAPPINGS_NAME, runtimeMappings);
         }
         return builder;
     }
-
 }

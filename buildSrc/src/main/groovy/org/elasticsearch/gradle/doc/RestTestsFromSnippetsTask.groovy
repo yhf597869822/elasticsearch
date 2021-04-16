@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.gradle.doc
@@ -22,24 +11,39 @@ package org.elasticsearch.gradle.doc
 import groovy.transform.PackageScope
 import org.elasticsearch.gradle.doc.SnippetsTask.Snippet
 import org.gradle.api.InvalidUserDataException
+import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.model.ObjectFactory
 
+import javax.inject.Inject;
 import java.nio.file.Files
 import java.nio.file.Path
 
 /**
  * Generates REST tests for each snippet marked // TEST.
  */
-public class RestTestsFromSnippetsTask extends SnippetsTask {
+class RestTestsFromSnippetsTask extends SnippetsTask {
     /**
      * These languages aren't supported by the syntax highlighter so we
      * shouldn't use them.
      */
     private static final List BAD_LANGUAGES = ['json', 'javascript']
 
+    /**
+     * Test setups defined in the build instead of the docs so they can be
+     * shared between many doc files.
+     */
     @Input
     Map<String, String> setups = new HashMap()
+
+    /**
+     * Test teardowns defined in the build instead of the docs so they can be
+     * shared between many doc files.
+     */
+    @Input
+    Map<String, String> teardowns = new HashMap()
 
     /**
      * A list of files that contain snippets that *probably* should be
@@ -53,16 +57,16 @@ public class RestTestsFromSnippetsTask extends SnippetsTask {
 
     /**
      * Root directory of the tests being generated. To make rest tests happy
-     * we generate them in a testRoot() which is contained in this directory.
+     * we generate them in a testRoot which is contained in this directory.
      */
-    @OutputDirectory
-    File testRoot = project.file('build/rest')
+    private DirectoryProperty testRoot
 
-    public RestTestsFromSnippetsTask() {
-        project.afterEvaluate {
-            // Wait to set this so testRoot can be customized
-            project.sourceSets.test.output.dir(testRoot, builtBy: this)
-        }
+    @Internal
+    Set<String> names = new HashSet<>()
+
+    @Inject
+    RestTestsFromSnippetsTask(ObjectFactory objectFactory) {
+        testRoot = objectFactory.directoryProperty()
         TestBuilder builder = new TestBuilder()
         doFirst { outputRoot().delete() }
         perSnippet builder.&handleSnippet
@@ -75,10 +79,14 @@ public class RestTestsFromSnippetsTask extends SnippetsTask {
      * contained within testRoot.
      */
     File outputRoot() {
-        return new File(testRoot, '/rest-api-spec/test')
+        return new File(testRoot.get().asFile, '/rest-api-spec/test')
     }
 
-    /**
+    @OutputDirectory
+    DirectoryProperty getTestRoot() {
+        return testRoot
+    }
+/**
      * Is this snippet a candidate for conversion to `// CONSOLE`?
      */
     static isConsoleCandidate(Snippet snippet) {
@@ -104,7 +112,7 @@ public class RestTestsFromSnippetsTask extends SnippetsTask {
      * format of the response is incompatible i.e. it is not a JSON object.
      */
     static shouldAddShardFailureCheck(String path) {
-        return path.startsWith('_cat') == false &&  path.startsWith('_xpack/ml/datafeeds/') == false
+        return path.startsWith('_cat') == false && path.startsWith('_ml/datafeeds/') == false
     }
 
     /**
@@ -202,11 +210,15 @@ public class RestTestsFromSnippetsTask extends SnippetsTask {
                 previousTest = snippet
                 return
             }
-            if (snippet.testResponse) {
+            if (snippet.testResponse || snippet.language == 'console-result') {
                 response(snippet)
                 return
             }
-            if (snippet.test || snippet.console) {
+            if ((snippet.language == 'js') && (snippet.console)) {
+                throw new InvalidUserDataException(
+                        "$snippet: Use `[source,console]` instead of `// CONSOLE`.")
+            }
+            if (snippet.test || snippet.language == 'console') {
                 test(snippet)
                 previousTest = snippet
                 return
@@ -234,7 +246,14 @@ public class RestTestsFromSnippetsTask extends SnippetsTask {
                 }
             } else {
                 current.println('---')
-                current.println("\"line_$test.start\":")
+                if (test.name != null && test.name.isBlank() == false) {
+                    if(names.add(test.name) == false) {
+                        throw new InvalidUserDataException("Duplicated snippet name '$test.name': $test")
+                    }
+                    current.println("\"$test.name\":")
+                } else {
+                    current.println("\"line_$test.start\":")
+                }
                 /* The Elasticsearch test runner doesn't support quite a few
                  * constructs unless we output this skip. We don't know if
                  * we're going to use these constructs, but we might so we
@@ -251,6 +270,7 @@ public class RestTestsFromSnippetsTask extends SnippetsTask {
                     case 'basic':
                     case 'gold':
                     case 'platinum':
+                    case 'enterprise':
                         current.println("        - xpack")
                         break;
                     default:
@@ -272,16 +292,37 @@ public class RestTestsFromSnippetsTask extends SnippetsTask {
             }
 
             body(test, false)
+
+            if (test.teardown != null) {
+                teardown(test)
+            }
         }
 
         private void setup(final Snippet snippet) {
             // insert a setup defined outside of the docs
-            for (final String setupName : snippet.setup.split(',')) {
-                final String setup = setups[setupName]
+            for (final String name : snippet.setup.split(',')) {
+                final String setup = setups[name]
                 if (setup == null) {
-                    throw new InvalidUserDataException("Couldn't find setup for $snippet")
+                    throw new InvalidUserDataException(
+                        "Couldn't find named setup $name for $snippet"
+                    )
                 }
+                current.println("# Named setup ${name}")
                 current.println(setup)
+            }
+        }
+
+        private void teardown(final Snippet snippet) {
+            // insert a teardown defined outside of the docs
+            for (final String name : snippet.teardown.split(',')) {
+                final String teardown = teardowns[name]
+                if (teardown == null) {
+                    throw new InvalidUserDataException(
+                        "Couldn't find named teardown $name for $snippet"
+                    )
+                }
+                current.println("# Named teardown ${name}")
+                current.println(teardown)
             }
         }
 
@@ -289,20 +330,19 @@ public class RestTestsFromSnippetsTask extends SnippetsTask {
             if (null == response.skip) {
                 current.println("  - match: ")
                 current.println("      \$body: ")
-                response.contents.eachLine { current.println("        $it") }
+                replaceBlockQuote(response.contents).eachLine {
+                    current.println("        $it")
+                }
             }
         }
 
         void emitDo(String method, String pathAndQuery, String body,
-                String catchPart, List warnings, boolean inSetup) {
+                String catchPart, List warnings, boolean inSetup, boolean skipShardFailures) {
             def (String path, String query) = pathAndQuery.tokenize('?')
             if (path == null) {
                 path = '' // Catch requests to the root...
             } else {
-                // Escape some characters that are also escaped by sense
                 path = path.replace('<', '%3C').replace('>', '%3E')
-                path = path.replace('{', '%7B').replace('}', '%7D')
-                path = path.replace('|', '%7C')
             }
             current.println("  - do:")
             if (catchPart != null) {
@@ -346,14 +386,14 @@ public class RestTestsFromSnippetsTask extends SnippetsTask {
              * section so we have to skip it there. We also omit the assertion
              * from APIs that don't return a JSON object
              */
-            if (false == inSetup && shouldAddShardFailureCheck(path)) {
+            if (false == inSetup && skipShardFailures == false && shouldAddShardFailureCheck(path)) {
                 current.println("  - is_false: _shards.failures")
             }
         }
 
         private void testSetup(Snippet snippet) {
             if (lastDocsPath == snippet.path) {
-                throw new InvalidUserDataException("$snippet: wasn't first")
+                throw new InvalidUserDataException("$snippet: wasn't first. TESTSETUP can only be used in the first snippet of a document.")
             }
             setupCurrent(snippet)
             current.println('---')
@@ -394,7 +434,7 @@ public class RestTestsFromSnippetsTask extends SnippetsTask {
                     pathAndQuery = pathAndQuery.substring(1)
                 }
                 emitDo(method, pathAndQuery, body, catchPart, snippet.warnings,
-                    inSetup)
+                    inSetup, snippet.skipShardsFailures)
             }
         }
 
@@ -402,6 +442,7 @@ public class RestTestsFromSnippetsTask extends SnippetsTask {
             if (lastDocsPath == test.path) {
                 return
             }
+            names.clear()
             finishLastTest()
             lastDocsPath = test.path
 

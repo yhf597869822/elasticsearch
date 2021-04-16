@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.monitoring.exporter.http;
 
@@ -10,12 +11,14 @@ import org.apache.http.entity.ByteArrayEntity;
 import org.apache.http.entity.ContentType;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.client.RestClient;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.xpack.core.monitoring.exporter.MonitoringTemplateUtils;
 
+import java.util.Collections;
 import java.util.Objects;
 import java.util.function.Supplier;
 
@@ -58,21 +61,21 @@ public class PipelineHttpResource extends PublishableHttpResource {
      * Determine if the current {@linkplain #pipelineName pipeline} exists.
      */
     @Override
-    protected CheckResponse doCheck(final RestClient client) {
-        return versionCheckForResource(client, logger,
-                                       "/_ingest/pipeline", pipelineName, "monitoring pipeline",
-                                       resourceOwnerName, "monitoring cluster",
-                                       XContentType.JSON.xContent(), MonitoringTemplateUtils.LAST_UPDATED_VERSION);
+    protected void doCheck(final RestClient client, final ActionListener<Boolean> listener) {
+        versionCheckForResource(client, listener, logger,
+                                "/_ingest/pipeline", pipelineName, "monitoring pipeline",
+                                resourceOwnerName, "monitoring cluster",
+                                XContentType.JSON.xContent(), MonitoringTemplateUtils.LAST_UPDATED_VERSION);
     }
 
     /**
      * Publish the current {@linkplain #pipelineName pipeline}.
      */
     @Override
-    protected boolean doPublish(final RestClient client) {
-        return putResource(client, logger,
-                           "/_ingest/pipeline", pipelineName, this::pipelineToHttpEntity, "monitoring pipeline",
-                           resourceOwnerName, "monitoring cluster");
+    protected void doPublish(final RestClient client, final ActionListener<ResourcePublishResult> listener) {
+        putResource(client, listener, logger,
+                    "/_ingest/pipeline", pipelineName, Collections.emptyMap(), this::pipelineToHttpEntity, "monitoring pipeline",
+                    resourceOwnerName, "monitoring cluster");
     }
 
     /**

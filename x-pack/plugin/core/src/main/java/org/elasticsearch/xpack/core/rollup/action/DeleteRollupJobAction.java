@@ -1,12 +1,13 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.core.rollup.action;
 
 
-import org.elasticsearch.action.Action;
+import org.elasticsearch.action.ActionType;
 import org.elasticsearch.action.ActionRequestBuilder;
 import org.elasticsearch.action.ActionRequestValidationException;
 import org.elasticsearch.action.FailedNodeException;
@@ -29,18 +30,13 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
-public class DeleteRollupJobAction extends Action<DeleteRollupJobAction.Response> {
+public class DeleteRollupJobAction extends ActionType<DeleteRollupJobAction.Response> {
 
     public static final DeleteRollupJobAction INSTANCE = new DeleteRollupJobAction();
     public static final String NAME = "cluster:admin/xpack/rollup/delete";
 
     private DeleteRollupJobAction() {
-        super(NAME);
-    }
-
-    @Override
-    public Response newResponse() {
-        return new Response();
+        super(NAME, DeleteRollupJobAction.Response::new);
     }
 
     public static class Request extends BaseTasksRequest<Request> implements ToXContentFragment {
@@ -52,6 +48,11 @@ public class DeleteRollupJobAction extends Action<DeleteRollupJobAction.Response
 
         public Request() {}
 
+        public Request(StreamInput in) throws IOException {
+            super(in);
+            id = in.readString();
+        }
+
         @Override
         public boolean match(Task task) {
             return task.getDescription().equals(RollupField.NAME + "_" + id);
@@ -59,12 +60,6 @@ public class DeleteRollupJobAction extends Action<DeleteRollupJobAction.Response
 
         public String getId() {
             return id;
-        }
-
-        @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
-            id = in.readString();
         }
 
         @Override
@@ -110,12 +105,7 @@ public class DeleteRollupJobAction extends Action<DeleteRollupJobAction.Response
 
     public static class Response extends BaseTasksResponse implements Writeable, ToXContentObject {
 
-        private boolean acknowledged;
-
-        public Response(StreamInput in) throws IOException {
-            super(Collections.emptyList(), Collections.emptyList());
-            readFrom(in);
-        }
+        private final boolean acknowledged;
 
         public Response(boolean acknowledged, List<TaskOperationFailure> taskFailures, List<FailedNodeException> nodeFailures) {
             super(taskFailures, nodeFailures);
@@ -127,18 +117,8 @@ public class DeleteRollupJobAction extends Action<DeleteRollupJobAction.Response
             this.acknowledged = acknowledged;
         }
 
-        public Response() {
-            super(Collections.emptyList(), Collections.emptyList());
-            this.acknowledged = false;
-        }
-
-        public boolean isDeleted() {
-            return acknowledged;
-        }
-
-        @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
+        public Response(StreamInput in) throws IOException {
+            super(in);
             acknowledged = in.readBoolean();
         }
 
@@ -146,6 +126,10 @@ public class DeleteRollupJobAction extends Action<DeleteRollupJobAction.Response
         public void writeTo(StreamOutput out) throws IOException {
             super.writeTo(out);
             out.writeBoolean(acknowledged);
+        }
+
+        public boolean isDeleted() {
+            return acknowledged;
         }
 
         @Override

@@ -1,10 +1,13 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.monitoring.collector;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.apache.logging.log4j.util.Supplier;
 import org.elasticsearch.ElasticsearchTimeoutException;
@@ -13,7 +16,6 @@ import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Strings;
-import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.license.XPackLicenseState;
@@ -33,7 +35,7 @@ import static org.elasticsearch.common.settings.Setting.timeSetting;
 /**
  * {@link Collector} are used to collect monitoring data about the cluster, nodes and indices.
  */
-public abstract class Collector extends AbstractComponent {
+public abstract class Collector {
 
     /**
      * List of indices names whose stats will be exported (default to all indices)
@@ -46,6 +48,7 @@ public abstract class Collector extends AbstractComponent {
 
     protected final ClusterService clusterService;
     protected final XPackLicenseState licenseState;
+    protected final Logger logger;
 
     public Collector(final String name, final ClusterService clusterService,
                      final Setting<TimeValue> timeoutSetting, final XPackLicenseState licenseState) {
@@ -53,6 +56,7 @@ public abstract class Collector extends AbstractComponent {
         this.clusterService = clusterService;
         this.collectionTimeoutSetting = timeoutSetting;
         this.licenseState = licenseState;
+        this.logger = LogManager.getLogger(getClass());
     }
 
     public String name() {
@@ -70,10 +74,6 @@ public abstract class Collector extends AbstractComponent {
      * @param isElectedMaster true if the current local node is the elected master node
      */
     protected boolean shouldCollect(final boolean isElectedMaster) {
-        if (licenseState.isMonitoringAllowed() == false) {
-            logger.trace("collector [{}] can not collect data due to invalid license", name());
-            return false;
-        }
         return true;
     }
 
@@ -85,7 +85,7 @@ public abstract class Collector extends AbstractComponent {
                 return doCollect(convertNode(timestamp, clusterService.localNode()), interval, clusterState);
             }
         } catch (ElasticsearchTimeoutException e) {
-            logger.error((Supplier<?>) () -> new ParameterizedMessage("collector [{}] timed out when collecting data", name()));
+            logger.error("collector [{}] timed out when collecting data: {}", name(), e.getMessage());
         } catch (Exception e) {
             logger.error((Supplier<?>) () -> new ParameterizedMessage("collector [{}] failed to collect data", name()), e);
         }
@@ -112,7 +112,7 @@ public abstract class Collector extends AbstractComponent {
      * @return the cluster's UUID
      */
     protected static String clusterUuid(final ClusterState clusterState) {
-        return clusterState.metaData().clusterUUID();
+        return clusterState.metadata().clusterUUID();
     }
 
     /**

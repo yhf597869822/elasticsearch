@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.watcher.actions.slack;
 
@@ -12,6 +13,7 @@ import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.common.xcontent.json.JsonXContent;
+import org.elasticsearch.script.JodaCompatibleZonedDateTime;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.xpack.core.watcher.actions.Action;
 import org.elasticsearch.xpack.core.watcher.execution.WatchExecutionContext;
@@ -27,10 +29,10 @@ import org.elasticsearch.xpack.watcher.notification.slack.SlackService;
 import org.elasticsearch.xpack.watcher.notification.slack.message.SlackMessage;
 import org.elasticsearch.xpack.watcher.notification.slack.message.SlackMessageDefaults;
 import org.elasticsearch.xpack.watcher.notification.slack.message.SlackMessageTests;
-import org.joda.time.DateTime;
-import org.joda.time.DateTimeZone;
 import org.junit.Before;
 
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -74,7 +76,8 @@ public class SlackActionTests extends ESTestCase {
 
         Map<String, Object> metadata = MapBuilder.<String, Object>newMapBuilder().put("_key", "_val").map();
 
-        DateTime now = DateTime.now(DateTimeZone.UTC);
+        ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
+        JodaCompatibleZonedDateTime jodaJavaNow = new JodaCompatibleZonedDateTime(now.toInstant(), ZoneOffset.UTC);
 
         Wid wid = new Wid(randomAlphaOfLength(5), now);
         WatchExecutionContext ctx = mockExecutionContextBuilder(wid.watchId())
@@ -85,14 +88,14 @@ public class SlackActionTests extends ESTestCase {
                 .buildMock();
 
         Map<String, Object> triggerModel = new HashMap<>();
-        triggerModel.put("triggered_time", now);
-        triggerModel.put("scheduled_time", now);
+        triggerModel.put("triggered_time", jodaJavaNow);
+        triggerModel.put("scheduled_time", jodaJavaNow);
         Map<String, Object> ctxModel = new HashMap<>();
         ctxModel.put("id", ctx.id().value());
         ctxModel.put("watch_id", wid.watchId());
         ctxModel.put("payload", data);
         ctxModel.put("metadata", metadata);
-        ctxModel.put("execution_time", now);
+        ctxModel.put("execution_time", jodaJavaNow);
         ctxModel.put("trigger", triggerModel);
         ctxModel.put("vars", emptyMap());
         Map<String, Object> expectedModel = singletonMap("ctx", ctxModel);
@@ -130,8 +133,8 @@ public class SlackActionTests extends ESTestCase {
         SentMessages sentMessages = new SentMessages(accountName, messages);
         when(account.send(message, eq(any()))).thenReturn(sentMessages);
 
-        Action.Result.Status expectedStatus = !hasError ? Action.Result.Status.SUCCESS :
-                !hasSuccess ? Action.Result.Status.FAILURE :
+        Action.Result.Status expectedStatus = hasError == false ? Action.Result.Status.SUCCESS :
+                hasSuccess == false ? Action.Result.Status.FAILURE :
                         Action.Result.Status.PARTIAL_FAILURE;
 
 

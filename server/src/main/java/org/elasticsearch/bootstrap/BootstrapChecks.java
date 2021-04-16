@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.bootstrap;
@@ -23,8 +12,10 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.apache.lucene.util.Constants;
+import org.elasticsearch.cluster.coordination.ClusterBootstrapService;
 import org.elasticsearch.common.SuppressForbidden;
 import org.elasticsearch.common.io.PathUtils;
+import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.transport.BoundTransportAddress;
 import org.elasticsearch.common.transport.TransportAddress;
 import org.elasticsearch.discovery.DiscoveryModule;
@@ -46,6 +37,12 @@ import java.util.Locale;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import static org.elasticsearch.cluster.coordination.ClusterBootstrapService.INITIAL_MASTER_NODES_SETTING;
+import static org.elasticsearch.discovery.DiscoveryModule.DISCOVERY_SEED_PROVIDERS_SETTING;
+import static org.elasticsearch.discovery.SettingsBasedSeedHostsProvider.DISCOVERY_SEED_HOSTS_SETTING;
 
 /**
  * We enforce bootstrap checks once a node has the transport protocol bound to a non-loopback interface or if the system property {@code
@@ -73,7 +70,7 @@ final class BootstrapChecks {
         final List<BootstrapCheck> combinedChecks = new ArrayList<>(builtInChecks);
         combinedChecks.addAll(additionalChecks);
         check(  context,
-                enforceLimits(boundTransportAddress, DiscoveryModule.DISCOVERY_TYPE_SETTING.get(context.settings)),
+                enforceLimits(boundTransportAddress, DiscoveryModule.DISCOVERY_TYPE_SETTING.get(context.settings())),
                 Collections.unmodifiableList(combinedChecks));
     }
 
@@ -136,7 +133,7 @@ final class BootstrapChecks {
         for (final BootstrapCheck check : checks) {
             final BootstrapCheck.BootstrapCheckResult result = check.check(context);
             if (result.isFailure()) {
-                if (!(enforceLimits || enforceBootstrapChecks) && !check.alwaysEnforce()) {
+                if (enforceLimits == false && enforceBootstrapChecks == false && check.alwaysEnforce() == false) {
                     ignoredErrors.add(result.getMessage());
                 } else {
                     errors.add(result.getMessage());
@@ -144,15 +141,16 @@ final class BootstrapChecks {
             }
         }
 
-        if (!ignoredErrors.isEmpty()) {
+        if (ignoredErrors.isEmpty() == false) {
             ignoredErrors.forEach(error -> log(logger, error));
         }
 
-        if (!errors.isEmpty()) {
+        if (errors.isEmpty() == false) {
             final List<String> messages = new ArrayList<>(1 + errors.size());
-            messages.add("[" + errors.size() + "] bootstrap checks failed");
+            messages.add("[" + errors.size() + "] bootstrap checks failed. You must address the points described in the following ["
+                    + errors.size() + "] lines before starting Elasticsearch.");
             for (int i = 0; i < errors.size(); i++) {
-                messages.add("[" + (i + 1) + "]: " + errors.get(i));
+                messages.add("bootstrap check failure [" + (i + 1) + "] of [" + errors.size() + "]: " + errors.get(i));
             }
             final NodeValidationException ne = new NodeValidationException(String.join("\n", messages));
             errors.stream().map(IllegalStateException::new).forEach(ne::addSuppressed);
@@ -174,9 +172,9 @@ final class BootstrapChecks {
     static boolean enforceLimits(final BoundTransportAddress boundTransportAddress, final String discoveryType) {
         final Predicate<TransportAddress> isLoopbackAddress = t -> t.address().getAddress().isLoopbackAddress();
         final boolean bound =
-                !(Arrays.stream(boundTransportAddress.boundAddresses()).allMatch(isLoopbackAddress) &&
-                isLoopbackAddress.test(boundTransportAddress.publishAddress()));
-        return bound && !"single-node".equals(discoveryType);
+                (Arrays.stream(boundTransportAddress.boundAddresses()).allMatch(isLoopbackAddress) &&
+                isLoopbackAddress.test(boundTransportAddress.publishAddress())) == false;
+        return bound && "single-node".equals(discoveryType) == false;
     }
 
     // the list of checks to execute
@@ -207,6 +205,7 @@ final class BootstrapChecks {
         checks.add(new EarlyAccessCheck());
         checks.add(new G1GCCheck());
         checks.add(new AllPermissionCheck());
+        checks.add(new DiscoveryConfiguredCheck());
         return Collections.unmodifiableList(checks);
     }
 
@@ -217,12 +216,22 @@ final class BootstrapChecks {
             final long initialHeapSize = getInitialHeapSize();
             final long maxHeapSize = getMaxHeapSize();
             if (initialHeapSize != 0 && maxHeapSize != 0 && initialHeapSize != maxHeapSize) {
-                final String message = String.format(
+                final String message;
+                if (isMemoryLocked()) {
+                    message = String.format(
                         Locale.ROOT,
                         "initial heap size [%d] not equal to maximum heap size [%d]; " +
-                                "this can cause resize pauses and prevents mlockall from locking the entire heap",
+                            "this can cause resize pauses and prevents memory locking from locking the entire heap",
                         getInitialHeapSize(),
                         getMaxHeapSize());
+                } else {
+                    message = String.format(
+                        Locale.ROOT,
+                        "initial heap size [%d] not equal to maximum heap size [%d]; " +
+                            "this can cause resize pauses",
+                        getInitialHeapSize(),
+                        getMaxHeapSize());
+                }
                 return BootstrapCheckResult.failure(message);
             } else {
                 return BootstrapCheckResult.success();
@@ -237,6 +246,10 @@ final class BootstrapChecks {
         // visible for testing
         long getMaxHeapSize() {
             return JvmInfo.jvmInfo().getConfiguredMaxHeapSize();
+        }
+
+        boolean isMemoryLocked() {
+            return Natives.isMemoryLocked();
         }
 
     }
@@ -258,7 +271,7 @@ final class BootstrapChecks {
         private final int limit;
 
         FileDescriptorCheck() {
-            this(1 << 16);
+            this(65535);
         }
 
         protected FileDescriptorCheck(final int limit) {
@@ -293,7 +306,7 @@ final class BootstrapChecks {
 
         @Override
         public BootstrapCheckResult check(BootstrapContext context) {
-            if (BootstrapSettings.MEMORY_LOCK_SETTING.get(context.settings) && !isMemoryLocked()) {
+            if (BootstrapSettings.MEMORY_LOCK_SETTING.get(context.settings()) && isMemoryLocked() == false) {
                 return BootstrapCheckResult.failure("memory locking requested for elasticsearch process but memory is not locked");
             } else {
                 return BootstrapCheckResult.success();
@@ -398,8 +411,8 @@ final class BootstrapChecks {
 
         @Override
         public BootstrapCheckResult check(final BootstrapContext context) {
-            // we only enforce the check if mmapfs is an allowed store type
-            if (IndexModule.NODE_STORE_ALLOW_MMAPFS.get(context.settings)) {
+            // we only enforce the check if a store is allowed to use mmap at all
+            if (IndexModule.NODE_STORE_ALLOW_MMAP.get(context.settings())) {
                 if (getMaxMapCount() != -1 && getMaxMapCount() < LIMIT) {
                     final String message = String.format(
                             Locale.ROOT,
@@ -516,7 +529,7 @@ final class BootstrapChecks {
 
         @Override
         public BootstrapCheckResult check(BootstrapContext context) {
-            if (BootstrapSettings.SYSTEM_CALL_FILTER_SETTING.get(context.settings) && !isSystemCallFilterInstalled()) {
+            if (BootstrapSettings.SYSTEM_CALL_FILTER_SETTING.get(context.settings()) && isSystemCallFilterInstalled() == false) {
                 final String message =  "system call filters failed to install; " +
                         "check the logs and fix your configuration or disable system call filters at your own risk";
                 return BootstrapCheckResult.failure(message);
@@ -565,7 +578,7 @@ final class BootstrapChecks {
         @Override
         boolean mightFork() {
             final String onError = onError();
-            return onError != null && !onError.equals("");
+            return onError != null && onError.isEmpty() == false;
         }
 
         // visible for testing
@@ -590,7 +603,7 @@ final class BootstrapChecks {
         @Override
         boolean mightFork() {
             final String onOutOfMemoryError = onOutOfMemoryError();
-            return onOutOfMemoryError != null && !onOutOfMemoryError.equals("");
+            return onOutOfMemoryError != null && onOutOfMemoryError.isEmpty() == false;
         }
 
         // visible for testing
@@ -713,4 +726,21 @@ final class BootstrapChecks {
 
     }
 
+    static class DiscoveryConfiguredCheck implements BootstrapCheck {
+        @Override
+        public BootstrapCheckResult check(BootstrapContext context) {
+            if (DiscoveryModule.ZEN2_DISCOVERY_TYPE.equals(DiscoveryModule.DISCOVERY_TYPE_SETTING.get(context.settings())) == false) {
+                return BootstrapCheckResult.success();
+            }
+            if (ClusterBootstrapService.discoveryIsConfigured(context.settings())) {
+                return BootstrapCheckResult.success();
+            }
+
+            return BootstrapCheckResult.failure(String.format(
+                Locale.ROOT,
+                "the default discovery settings are unsuitable for production use; at least one of [%s] must be configured",
+                Stream.of(DISCOVERY_SEED_HOSTS_SETTING, DISCOVERY_SEED_PROVIDERS_SETTING, INITIAL_MASTER_NODES_SETTING)
+                    .map(Setting::getKey).collect(Collectors.joining(", "))));
+        }
+    }
 }

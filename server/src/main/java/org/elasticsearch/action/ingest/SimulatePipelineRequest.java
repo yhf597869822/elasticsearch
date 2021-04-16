@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.action.ingest;
@@ -31,6 +20,7 @@ import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.index.VersionType;
 import org.elasticsearch.ingest.ConfigurationUtils;
 import org.elasticsearch.ingest.IngestDocument;
+import org.elasticsearch.ingest.IngestDocument.Metadata;
 import org.elasticsearch.ingest.IngestService;
 import org.elasticsearch.ingest.Pipeline;
 
@@ -41,23 +31,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-import static org.elasticsearch.ingest.IngestDocument.MetaData;
-
 public class SimulatePipelineRequest extends ActionRequest implements ToXContentObject {
-
     private String id;
     private boolean verbose;
     private BytesReference source;
     private XContentType xContentType;
-
-    /**
-     * Create a new request
-     * @deprecated use {@link #SimulatePipelineRequest(BytesReference, XContentType)} that does not attempt content autodetection
-     */
-    @Deprecated
-    public SimulatePipelineRequest(BytesReference source) {
-        this(source, XContentHelper.xContentType(source));
-    }
 
     /**
      * Creates a new request with the given source and its content type
@@ -108,17 +86,12 @@ public class SimulatePipelineRequest extends ActionRequest implements ToXContent
     }
 
     @Override
-    public void readFrom(StreamInput in) throws IOException {
-        throw new UnsupportedOperationException("usage of Streamable is to be replaced by Writeable");
-    }
-
-    @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
         out.writeOptionalString(id);
         out.writeBoolean(verbose);
         out.writeBytesReference(source);
-        out.writeEnum(xContentType);
+        XContentHelper.writeTo(out, xContentType);
     }
 
     @Override
@@ -183,29 +156,60 @@ public class SimulatePipelineRequest extends ActionRequest implements ToXContent
     private static List<IngestDocument> parseDocs(Map<String, Object> config) {
         List<Map<String, Object>> docs =
             ConfigurationUtils.readList(null, null, config, Fields.DOCS);
+        if (docs.isEmpty()) {
+            throw new IllegalArgumentException("must specify at least one document in [docs]");
+        }
         List<IngestDocument> ingestDocumentList = new ArrayList<>();
-        for (Map<String, Object> dataMap : docs) {
+        for (Object object : docs) {
+            if ((object instanceof Map) ==  false) {
+                throw new IllegalArgumentException("malformed [docs] section, should include an inner object");
+            }
+            Map<String, Object> dataMap = (Map<String, Object>) object;
             Map<String, Object> document = ConfigurationUtils.readMap(null, null,
                 dataMap, Fields.SOURCE);
             String index = ConfigurationUtils.readStringOrIntProperty(null, null,
-                dataMap, MetaData.INDEX.getFieldName(), "_index");
-            String type = ConfigurationUtils.readStringOrIntProperty(null, null,
-                dataMap, MetaData.TYPE.getFieldName(), "_type");
+                dataMap, Metadata.INDEX.getFieldName(), "_index");
             String id = ConfigurationUtils.readStringOrIntProperty(null, null,
-                dataMap, MetaData.ID.getFieldName(), "_id");
+                dataMap, Metadata.ID.getFieldName(), "_id");
             String routing = ConfigurationUtils.readOptionalStringOrIntProperty(null, null,
-                dataMap, MetaData.ROUTING.getFieldName());
+                dataMap, Metadata.ROUTING.getFieldName());
             Long version = null;
-            if (dataMap.containsKey(MetaData.VERSION.getFieldName())) {
-                version = (Long) ConfigurationUtils.readObject(null, null, dataMap, MetaData.VERSION.getFieldName());
+            if (dataMap.containsKey(Metadata.VERSION.getFieldName())) {
+                String versionValue = ConfigurationUtils.readOptionalStringOrLongProperty(null, null,
+                    dataMap, Metadata.VERSION.getFieldName());
+                if (versionValue != null) {
+                    version = Long.valueOf(versionValue);
+                } else {
+                    throw new IllegalArgumentException("[_version] cannot be null");
+                }
             }
             VersionType versionType = null;
-            if (dataMap.containsKey(MetaData.VERSION_TYPE.getFieldName())) {
+            if (dataMap.containsKey(Metadata.VERSION_TYPE.getFieldName())) {
                 versionType = VersionType.fromString(ConfigurationUtils.readStringProperty(null, null, dataMap,
-                    MetaData.VERSION_TYPE.getFieldName()));
+                    Metadata.VERSION_TYPE.getFieldName()));
             }
             IngestDocument ingestDocument =
-                new IngestDocument(index, type, id, routing, version, versionType, document);
+                new IngestDocument(index, id, routing, version, versionType, document);
+            if (dataMap.containsKey(Metadata.IF_SEQ_NO.getFieldName())) {
+                String ifSeqNoValue = ConfigurationUtils.readOptionalStringOrLongProperty(null, null,
+                    dataMap, Metadata.IF_SEQ_NO.getFieldName());
+                if (ifSeqNoValue != null) {
+                    Long ifSeqNo = Long.valueOf(ifSeqNoValue);
+                    ingestDocument.setFieldValue(Metadata.IF_SEQ_NO.getFieldName(), ifSeqNo);
+                } else {
+                    throw new IllegalArgumentException("[_if_seq_no] cannot be null");
+                }
+            }
+            if (dataMap.containsKey(Metadata.IF_PRIMARY_TERM.getFieldName())) {
+                String ifPrimaryTermValue = ConfigurationUtils.readOptionalStringOrLongProperty(null, null,
+                    dataMap, Metadata.IF_PRIMARY_TERM.getFieldName());
+                if (ifPrimaryTermValue != null) {
+                    Long ifPrimaryTerm = Long.valueOf(ifPrimaryTermValue);
+                    ingestDocument.setFieldValue(Metadata.IF_PRIMARY_TERM.getFieldName(), ifPrimaryTerm);
+                } else {
+                    throw new IllegalArgumentException("[_if_primary_term] cannot be null");
+                }
+            }
             ingestDocumentList.add(ingestDocument);
         }
         return ingestDocumentList;

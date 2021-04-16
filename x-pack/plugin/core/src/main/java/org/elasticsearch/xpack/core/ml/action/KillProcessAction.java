@@ -1,14 +1,13 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.core.ml.action;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.action.ActionRequestBuilder;
+import org.elasticsearch.action.ActionType;
 import org.elasticsearch.action.support.tasks.BaseTasksResponse;
-import org.elasticsearch.client.ElasticsearchClient;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
@@ -16,25 +15,13 @@ import org.elasticsearch.common.io.stream.Writeable;
 import java.io.IOException;
 import java.util.Objects;
 
-public class KillProcessAction extends Action<KillProcessAction.Response> {
+public class KillProcessAction extends ActionType<KillProcessAction.Response> {
 
     public static final KillProcessAction INSTANCE = new KillProcessAction();
     public static final String NAME = "cluster:internal/xpack/ml/job/kill/process";
 
     private KillProcessAction() {
-        super(NAME);
-    }
-
-    @Override
-    public Response newResponse() {
-        return new Response();
-    }
-
-    static class RequestBuilder extends ActionRequestBuilder<Request, Response> {
-
-        RequestBuilder(ElasticsearchClient client, KillProcessAction action) {
-            super(client, action, new Request());
-        }
+        super(NAME, KillProcessAction.Response::new);
     }
 
     public static class Request extends JobTaskRequest<Request> {
@@ -43,22 +30,18 @@ public class KillProcessAction extends Action<KillProcessAction.Response> {
             super(jobId);
         }
 
-        public Request() {
-            super();
+        public Request(StreamInput in) throws IOException {
+            super(in);
         }
     }
 
     public static class Response extends BaseTasksResponse implements Writeable {
 
-        private boolean killed;
-
-        public Response() {
-            super(null, null);
-        }
+        private final boolean killed;
 
         public Response(StreamInput in) throws IOException {
-            super(null, null);
-            readFrom(in);
+            super(in);
+            killed = in.readBoolean();
         }
 
         public Response(boolean killed) {
@@ -68,12 +51,6 @@ public class KillProcessAction extends Action<KillProcessAction.Response> {
 
         public boolean isKilled() {
             return killed;
-        }
-
-        @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
-            killed = in.readBoolean();
         }
 
         @Override

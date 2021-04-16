@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.script;
@@ -97,6 +86,14 @@ public class JodaCompatibleZonedDateTimeTests extends ESTestCase {
         assertDeprecation(assertions, "Use of the joda time method [" + oldMethod + "] is deprecated. Use [" + newMethod + "] instead.");
     }
 
+    public void testEquals() {
+        assertThat(javaTime, equalTo(javaTime));
+    }
+
+    public void testToString() {
+        assertThat(javaTime.toString(), equalTo(jodaTime.toString()));
+    }
+
     public void testDayOfMonth() {
         assertThat(javaTime.getDayOfMonth(), equalTo(jodaTime.getDayOfMonth()));
     }
@@ -142,6 +139,10 @@ public class JodaCompatibleZonedDateTimeTests extends ESTestCase {
 
     public void testYear() {
         assertThat(javaTime.getYear(), equalTo(jodaTime.getYear()));
+    }
+
+    public void testZone() {
+        assertThat(javaTime.getZone().getId(), equalTo(jodaTime.getZone().getID()));
     }
 
     public void testMillis() {
@@ -201,12 +202,12 @@ public class JodaCompatibleZonedDateTimeTests extends ESTestCase {
 
     public void testWeekOfWeekyear() {
         assertMethodDeprecation(() -> assertThat(javaTime.getWeekOfWeekyear(), equalTo(jodaTime.getWeekOfWeekyear())),
-            "getWeekOfWeekyear()", "get(WeekFields.ISO.weekOfWeekBasedYear())");
+            "getWeekOfWeekyear()", "get(DateFormatters.WEEK_FIELDS.weekOfWeekBasedYear())");
     }
 
     public void testWeekyear() {
         assertMethodDeprecation(() -> assertThat(javaTime.getWeekyear(), equalTo(jodaTime.getWeekyear())),
-            "getWeekyear()", "get(WeekFields.ISO.weekBasedYear())");
+            "getWeekyear()", "get(DateFormatters.WEEK_FIELDS.weekBasedYear())");
     }
 
     public void testYearOfCentury() {
@@ -236,5 +237,34 @@ public class JodaCompatibleZonedDateTimeTests extends ESTestCase {
 
     public void testDayOfWeekEnum() {
         assertThat(javaTime.getDayOfWeekEnum(), equalTo(DayOfWeek.of(jodaTime.getDayOfWeek())));
+    }
+
+    public void testToStringWithLocaleAndZeroOffset() {
+        JodaCompatibleZonedDateTime dt = new JodaCompatibleZonedDateTime(Instant.EPOCH, ZoneOffset.ofTotalSeconds(0));
+        assertMethodDeprecation(() -> dt.toString("yyyy-MM-dd hh:mm", Locale.ROOT), "toString(String,Locale)", "a DateTimeFormatter");
+    }
+
+    public void testToStringAndZeroOffset() {
+        JodaCompatibleZonedDateTime dt = new JodaCompatibleZonedDateTime(Instant.EPOCH, ZoneOffset.ofTotalSeconds(0));
+        assertMethodDeprecation(() -> dt.toString("yyyy-MM-dd hh:mm"), "toString(String)", "a DateTimeFormatter");
+    }
+
+    public void testIsEqual() {
+        assertTrue(javaTime.isEqual(javaTime));
+    }
+
+    public void testIsAfter() {
+        long millis = randomLongBetween(0, Integer.MAX_VALUE / 2);
+        JodaCompatibleZonedDateTime beforeTime = new JodaCompatibleZonedDateTime(Instant.ofEpochMilli(millis), ZoneOffset.ofHours(-7));
+        millis = randomLongBetween(millis + 1, Integer.MAX_VALUE);
+        JodaCompatibleZonedDateTime afterTime = new JodaCompatibleZonedDateTime(Instant.ofEpochMilli(millis), ZoneOffset.ofHours(-7));
+        assertTrue(afterTime.isAfter(beforeTime));
+    }
+    public void testIsBefore() {
+        long millis = randomLongBetween(0, Integer.MAX_VALUE / 2);
+        JodaCompatibleZonedDateTime beforeTime = new JodaCompatibleZonedDateTime(Instant.ofEpochMilli(millis), ZoneOffset.ofHours(-7));
+        millis = randomLongBetween(millis + 1, Integer.MAX_VALUE);
+        JodaCompatibleZonedDateTime afterTime = new JodaCompatibleZonedDateTime(Instant.ofEpochMilli(millis), ZoneOffset.ofHours(-7));
+        assertTrue(beforeTime.isBefore(afterTime));
     }
 }

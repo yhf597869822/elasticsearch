@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.test;
 
@@ -64,21 +65,22 @@ public class SettingsFilterTests extends ESTestCase {
         if (inFipsJvm() == false) {
             configureFilteredSetting("xpack.security.authc.realms.pki.pki1.truststore.path",
                 getDataPath("/org/elasticsearch/xpack/security/transport/ssl/certs/simple/truststore-testnode-only.jks").toString());
-            configureFilteredSetting("xpack.ssl.keystore.path",
+            configureFilteredSetting("xpack.security.transport.ssl.keystore.path",
                 getDataPath("/org/elasticsearch/xpack/security/transport/ssl/certs/simple/testnode.jks").toString());
         }
         configureSecureSetting("xpack.security.authc.realms.pki.pki1.truststore.secure_password", "truststore-testnode-only");
         configureFilteredSetting("xpack.security.authc.realms.pki.pki1.truststore.algorithm", "SunX509");
 
 
-        configureFilteredSetting("xpack.ssl.cipher_suites",
+        configureUnfilteredSetting("xpack.security.transport.ssl.enabled", "true");
+        configureFilteredSetting("xpack.security.transport.ssl.cipher_suites",
                 Strings.arrayToCommaDelimitedString(XPackSettings.DEFAULT_CIPHERS.toArray()));
-        configureFilteredSetting("xpack.ssl.supported_protocols", randomFrom("TLSv1", "TLSv1.1", "TLSv1.2"));
-        configureSecureSetting("xpack.ssl.keystore.secure_password", "testnode");
-        configureFilteredSetting("xpack.ssl.keystore.algorithm", KeyManagerFactory.getDefaultAlgorithm());
-        configureSecureSetting("xpack.ssl.keystore.secure_key_password", "testnode");
-        configureSecureSetting("xpack.ssl.truststore.secure_password", randomAlphaOfLength(5));
-        configureFilteredSetting("xpack.ssl.truststore.algorithm", TrustManagerFactory.getDefaultAlgorithm());
+        configureFilteredSetting("xpack.security.transport.ssl.supported_protocols", randomFrom("TLSv1", "TLSv1.1", "TLSv1.2"));
+        configureSecureSetting("xpack.security.transport.ssl.keystore.secure_password", "testnode");
+        configureFilteredSetting("xpack.security.transport.ssl.keystore.algorithm", KeyManagerFactory.getDefaultAlgorithm());
+        configureSecureSetting("xpack.security.transport.ssl.keystore.secure_key_password", "testnode");
+        configureSecureSetting("xpack.security.transport.ssl.truststore.secure_password", randomAlphaOfLength(5));
+        configureFilteredSetting("xpack.security.transport.ssl.truststore.algorithm", TrustManagerFactory.getDefaultAlgorithm());
 
         // client profile
         configureUnfilteredSetting("transport.profiles.client.port", "9500-9600");

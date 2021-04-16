@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.monitor.jvm;
@@ -22,7 +11,6 @@ package org.elasticsearch.monitor.jvm;
 import org.apache.lucene.util.CollectionUtil;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.common.time.DateFormatter;
-import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.common.unit.TimeValue;
 
 import java.lang.management.ManagementFactory;
@@ -43,7 +31,7 @@ public class HotThreads {
 
     private static final Object mutex = new Object();
 
-    private static final DateFormatter DATE_TIME_FORMATTER = DateFormatters.forPattern("dateOptionalTime");
+    private static final DateFormatter DATE_TIME_FORMATTER = DateFormatter.forPattern("date_optional_time");
 
     private int busiestThreads = 3;
     private TimeValue interval = new TimeValue(500, TimeUnit.MILLISECONDS);
@@ -113,7 +101,7 @@ public class HotThreads {
                 methodName.equals("select")) {
                 return true;
             }
-            if (className.equals("org.elasticsearch.threadpool.ThreadPool$EstimatedTimeThread") &&
+            if (className.equals("org.elasticsearch.threadpool.ThreadPool$CachedTimeThread") &&
                 methodName.equals("run")) {
                 return true;
             }
@@ -234,7 +222,8 @@ public class HotThreads {
                 continue; // thread is not alive yet or died before the first snapshot - ignore it!
             }
             double percent = (((double) time) / interval.nanos()) * 100;
-            sb.append(String.format(Locale.ROOT, "%n%4.1f%% (%s out of %s) %s usage by thread '%s'%n", percent, TimeValue.timeValueNanos(time), interval, type, threadName));
+            sb.append(String.format(Locale.ROOT, "%n%4.1f%% (%s out of %s) %s usage by thread '%s'%n",
+                percent, TimeValue.timeValueNanos(time), interval, type, threadName));
             // for each snapshot (2nd array index) find later snapshot for same thread with max number of
             // identical StackTraceElements (starting from end of each)
             boolean[] done = new boolean[threadElementsSnapshotCount];
@@ -267,7 +256,8 @@ public class HotThreads {
                             sb.append(String.format(Locale.ROOT, "    %s%n", show[l]));
                         }
                     } else {
-                        sb.append(String.format(Locale.ROOT, "  %d/%d snapshots sharing following %d elements%n", count, threadElementsSnapshotCount, maxSim));
+                        sb.append(String.format(Locale.ROOT, "  %d/%d snapshots sharing following %d elements%n",
+                            count, threadElementsSnapshotCount, maxSim));
                         for (int l = show.length - maxSim; l < show.length; l++) {
                             sb.append(String.format(Locale.ROOT, "    %s%n", show[l]));
                         }

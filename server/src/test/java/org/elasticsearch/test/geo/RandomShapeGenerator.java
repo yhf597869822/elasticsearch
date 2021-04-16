@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.test.geo;
@@ -154,7 +143,7 @@ public class RandomShapeGenerator extends RandomGeoGenerator {
     /**
      * Creates a random shape useful for randomized testing, NOTE: exercise caution when using this to build random GeometryCollections
      * as creating a large random number of random shapes can result in massive resource consumption
-     * see: {@link GeoShapeQueryTests#testShapeFilterWithRandomGeoCollection}
+     * see: {@link GeoShapeQueryTests#testQueryRandomGeoCollection()}
      *
      * The following options are included
      * @param nearPoint Create a shape near a provided point
@@ -192,7 +181,9 @@ public class RandomShapeGenerator extends RandomGeoGenerator {
                     p = xRandomPointIn(r, within);
                     coordinatesBuilder.coordinate(p.getX(), p.getY());
                 }
-                ShapeBuilder pcb = (st == ShapeType.MULTIPOINT) ? new MultiPointBuilder(coordinatesBuilder.build()) : new LineStringBuilder(coordinatesBuilder);
+                ShapeBuilder pcb = (st == ShapeType.MULTIPOINT)
+                    ? new MultiPointBuilder(coordinatesBuilder.build())
+                    : new LineStringBuilder(coordinatesBuilder);
                 return pcb;
             case MULTILINESTRING:
                 MultiLineStringBuilder mlsb = new MultiLineStringBuilder();
@@ -204,7 +195,7 @@ public class RandomShapeGenerator extends RandomGeoGenerator {
                 numPoints = RandomNumbers.randomIntBetween(r, 5, 25);
                 Coordinate[] coordinates = new Coordinate[numPoints];
                 for (int i=0; i<numPoints; ++i) {
-                    p = (Point) createShape(r, nearPoint, within, ShapeType.POINT, false).build();
+                    p = (Point) createShape(r, nearPoint, within, ShapeType.POINT, false).buildS4J();
                     coordinates[i] = new Coordinate(p.getX(), p.getY());
                 }
                 // random point order or random linestrings can lead to invalid self-crossing polygons,
@@ -227,7 +218,7 @@ public class RandomShapeGenerator extends RandomGeoGenerator {
                     // intent for ambiguous polygons. Therefore, an invalid oriented dateline crossing polygon could be built.
                     // The validate flag will check for these possibilities and bail if an incorrect geometry is created
                     try {
-                        pgb.build();
+                        pgb.buildS4J();
                     } catch (AssertionError | InvalidShapeException e) {
                         // jts bug may occasionally misinterpret coordinate order causing an unhelpful ('geom' assertion)
                         // or InvalidShapeException

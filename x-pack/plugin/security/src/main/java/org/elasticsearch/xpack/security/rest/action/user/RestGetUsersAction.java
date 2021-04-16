@@ -1,27 +1,29 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.security.rest.action.user;
 
 import org.elasticsearch.client.node.NodeClient;
 import org.elasticsearch.common.Strings;
+import org.elasticsearch.common.RestApiVersion;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.license.XPackLicenseState;
 import org.elasticsearch.rest.BytesRestResponse;
-import org.elasticsearch.rest.RestController;
 import org.elasticsearch.rest.RestRequest;
 import org.elasticsearch.rest.RestResponse;
 import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.rest.action.RestBuilderListener;
+import org.elasticsearch.xpack.core.security.action.user.GetUsersRequestBuilder;
 import org.elasticsearch.xpack.core.security.action.user.GetUsersResponse;
-import org.elasticsearch.xpack.core.security.client.SecurityClient;
 import org.elasticsearch.xpack.core.security.user.User;
 import org.elasticsearch.xpack.security.rest.action.SecurityBaseRestHandler;
 
 import java.io.IOException;
+import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 
@@ -30,22 +32,30 @@ import static org.elasticsearch.rest.RestRequest.Method.GET;
  */
 public class RestGetUsersAction extends SecurityBaseRestHandler {
 
-    public RestGetUsersAction(Settings settings, RestController controller, XPackLicenseState licenseState) {
+    public RestGetUsersAction(Settings settings, XPackLicenseState licenseState) {
         super(settings, licenseState);
-        controller.registerHandler(GET, "/_xpack/security/user/", this);
-        controller.registerHandler(GET, "/_xpack/security/user/{username}", this);
+    }
+
+    @Override
+    public List<Route> routes() {
+        return List.of(
+            Route.builder(GET, "/_security/user/")
+                .replaces(GET, "/_xpack/security/user/", RestApiVersion.V_7).build(),
+            Route.builder(GET, "/_security/user/{username}")
+                .replaces(GET, "/_xpack/security/user/{username}", RestApiVersion.V_7).build()
+        );
     }
 
     @Override
     public String getName() {
-        return "xpack_security_get_users_action";
+        return "security_get_users_action";
     }
 
     @Override
     public RestChannelConsumer innerPrepareRequest(RestRequest request, NodeClient client) throws IOException {
         String[] usernames = request.paramAsStringArray("username", Strings.EMPTY_ARRAY);
 
-        return channel -> new SecurityClient(client).prepareGetUsers(usernames).execute(new RestBuilderListener<GetUsersResponse>(channel) {
+        return channel -> new GetUsersRequestBuilder(client).usernames(usernames).execute(new RestBuilderListener<>(channel) {
             @Override
             public RestResponse buildResponse(GetUsersResponse response, XContentBuilder builder) throws Exception {
                 builder.startObject();

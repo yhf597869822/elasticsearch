@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.sql.action;
 
@@ -15,12 +16,14 @@ import org.elasticsearch.search.SearchModule;
 import org.elasticsearch.test.AbstractSerializingTestCase;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.xpack.sql.proto.Mode;
+import org.elasticsearch.xpack.sql.proto.RequestInfo;
 import org.junit.Before;
 
 import java.io.IOException;
-import java.util.Collections;
 import java.util.function.Consumer;
 
+import static java.util.Collections.emptyList;
+import static org.elasticsearch.xpack.ql.TestUtils.randomRuntimeMappings;
 import static org.elasticsearch.xpack.sql.action.SqlTestUtils.randomFilter;
 import static org.elasticsearch.xpack.sql.action.SqlTestUtils.randomFilterOrNull;
 
@@ -35,8 +38,8 @@ public class SqlTranslateRequestTests extends AbstractSerializingTestCase<SqlTra
 
     @Override
     protected SqlTranslateRequest createTestInstance() {
-        return new SqlTranslateRequest(testMode,  randomAlphaOfLength(10), Collections.emptyList(), randomFilterOrNull(random()),
-                randomTimeZone(), between(1, Integer.MAX_VALUE), randomTV(), randomTV());
+        return new SqlTranslateRequest(randomAlphaOfLength(10), emptyList(), randomFilterOrNull(random()),
+                randomRuntimeMappings(),randomZone(), between(1, Integer.MAX_VALUE), randomTV(), randomTV(), new RequestInfo(testMode));
     }
 
     @Override
@@ -50,19 +53,19 @@ public class SqlTranslateRequestTests extends AbstractSerializingTestCase<SqlTra
 
     @Override
     protected NamedWriteableRegistry getNamedWriteableRegistry() {
-        SearchModule searchModule = new SearchModule(Settings.EMPTY, false, Collections.emptyList());
+        SearchModule searchModule = new SearchModule(Settings.EMPTY, emptyList());
         return new NamedWriteableRegistry(searchModule.getNamedWriteables());
     }
 
     @Override
     protected NamedXContentRegistry xContentRegistry() {
-        SearchModule searchModule = new SearchModule(Settings.EMPTY, false, Collections.emptyList());
+        SearchModule searchModule = new SearchModule(Settings.EMPTY, emptyList());
         return new NamedXContentRegistry(searchModule.getNamedXContents());
     }
 
     @Override
     protected SqlTranslateRequest doParseInstance(XContentParser parser) {
-        return SqlTranslateRequest.fromXContent(parser, testMode);
+        return SqlTranslateRequest.fromXContent(parser);
     }
 
     @Override
@@ -70,14 +73,16 @@ public class SqlTranslateRequestTests extends AbstractSerializingTestCase<SqlTra
         @SuppressWarnings("unchecked")
         Consumer<SqlTranslateRequest> mutator = randomFrom(
                 request -> request.query(randomValueOtherThan(request.query(), () -> randomAlphaOfLength(5))),
-                request -> request.timeZone(randomValueOtherThan(request.timeZone(), ESTestCase::randomTimeZone)),
+                request -> request.zoneId(randomValueOtherThan(request.zoneId(), ESTestCase::randomZone)),
                 request -> request.fetchSize(randomValueOtherThan(request.fetchSize(), () -> between(1, Integer.MAX_VALUE))),
                 request -> request.requestTimeout(randomValueOtherThan(request.requestTimeout(), this::randomTV)),
                 request -> request.filter(randomValueOtherThan(request.filter(),
-                        () -> request.filter() == null ? randomFilter(random()) : randomFilterOrNull(random())))
+                        () -> request.filter() == null ? randomFilter(random()) : randomFilterOrNull(random()))),
+                request -> request.runtimeMappings(randomValueOtherThan(request.runtimeMappings(), () -> randomRuntimeMappings()))
         );
-        SqlTranslateRequest newRequest = new SqlTranslateRequest(instance.mode(), instance.query(), instance.params(), instance.filter(),
-                instance.timeZone(), instance.fetchSize(), instance.requestTimeout(), instance.pageTimeout());
+        SqlTranslateRequest newRequest = new SqlTranslateRequest(instance.query(), instance.params(), instance.filter(),
+                instance.runtimeMappings(), instance.zoneId(), instance.fetchSize(), instance.requestTimeout(), instance.pageTimeout(),
+                instance.requestInfo());
         mutator.accept(newRequest);
         return newRequest;
     }

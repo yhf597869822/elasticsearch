@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.client.documentation;
@@ -30,6 +19,8 @@ import org.elasticsearch.client.license.StartTrialRequest;
 import org.elasticsearch.client.license.StartTrialResponse;
 import org.elasticsearch.client.license.StartBasicRequest;
 import org.elasticsearch.client.license.StartBasicResponse;
+import org.elasticsearch.client.license.GetBasicStatusResponse;
+import org.elasticsearch.client.license.GetTrialStatusResponse;
 import org.elasticsearch.common.Booleans;
 import org.junit.After;
 import org.junit.BeforeClass;
@@ -192,7 +183,7 @@ public class LicensingDocumentationIT extends ESRestHighLevelClientTestCase {
             //end::get-license-response
 
             assertThat(currentLicense, containsString("trial"));
-            assertThat(currentLicense, containsString("client_rest-high-level_integTestCluster"));
+            assertThat(currentLicense, containsString("ntegTest"));
         }
         {
             GetLicenseRequest request = new GetLicenseRequest();
@@ -231,7 +222,7 @@ public class LicensingDocumentationIT extends ESRestHighLevelClientTestCase {
             String currentLicense = response.getLicenseDefinition();
             assertThat(currentLicense, startsWith("{"));
             assertThat(currentLicense, containsString("trial"));
-            assertThat(currentLicense, containsString("client_rest-high-level_integTestCluster"));
+            assertThat(currentLicense, containsString("ntegTest"));
             assertThat(currentLicense, endsWith("}"));
         }
     }
@@ -334,6 +325,32 @@ public class LicensingDocumentationIT extends ESRestHighLevelClientTestCase {
             // end::start-basic-execute-async
 
             assertTrue(latch.await(30L, TimeUnit.SECONDS));
+        }
+    }
+
+    public void testGetTrialStatus() throws IOException {
+        RestHighLevelClient client = highLevelClient();
+        {
+            //tag::get-trial-status-execute
+            GetTrialStatusResponse response = client.license().getTrialStatus(RequestOptions.DEFAULT);
+            //end::get-trial-status-execute
+
+            //tag::get-trial-status-response
+            boolean eligibleToStartTrial = response.isEligibleToStartTrial(); // <1>
+            //end::get-trial-status-response
+        }
+    }
+
+    public void testGetBasicStatus() throws IOException {
+        RestHighLevelClient client = highLevelClient();
+        {
+            //tag::get-basic-status-execute
+            GetBasicStatusResponse response = client.license().getBasicStatus(RequestOptions.DEFAULT);
+            //end::get-basic-status-execute
+
+            //tag::get-basic-status-response
+            boolean eligibleToStartbasic = response.isEligibleToStartBasic(); // <1>
+            //end::get-basic-status-response
         }
     }
 }

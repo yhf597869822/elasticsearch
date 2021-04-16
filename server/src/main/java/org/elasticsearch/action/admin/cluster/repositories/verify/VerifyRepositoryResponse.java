@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.action.admin.cluster.repositories.verify;
@@ -48,7 +37,7 @@ public class VerifyRepositoryResponse extends ActionResponse implements ToXConte
     public static class NodeView implements Writeable, ToXContentObject {
         private static final ObjectParser.NamedObjectParser<NodeView, Void> PARSER;
         static {
-            ObjectParser<NodeView, Void> internalParser = new ObjectParser<>(NODES);
+            ObjectParser<NodeView, Void> internalParser = new ObjectParser<>(NODES, true, null);
             internalParser.declareString(NodeView::setName, new ParseField(NAME));
             PARSER = (p, v, name) -> internalParser.parse(p, new NodeView(name), null);
         }
@@ -110,27 +99,28 @@ public class VerifyRepositoryResponse extends ActionResponse implements ToXConte
     private List<NodeView> nodes;
 
     private static final ObjectParser<VerifyRepositoryResponse, Void> PARSER =
-        new ObjectParser<>(VerifyRepositoryResponse.class.getName(), VerifyRepositoryResponse::new);
+        new ObjectParser<>(VerifyRepositoryResponse.class.getName(), true, VerifyRepositoryResponse::new);
     static {
         PARSER.declareNamedObjects(VerifyRepositoryResponse::setNodes, NodeView.PARSER, new ParseField("nodes"));
     }
 
-    VerifyRepositoryResponse() {
+    public VerifyRepositoryResponse() {}
+
+    public VerifyRepositoryResponse(StreamInput in) throws IOException {
+        super(in);
+        this.nodes = in.readList(NodeView::new);
     }
 
     public VerifyRepositoryResponse(DiscoveryNode[] nodes) {
         this.nodes = Arrays.stream(nodes).map(dn ->  new NodeView(dn.getId(), dn.getName())).collect(Collectors.toList());
     }
 
-    @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
-        this.nodes = in.readList(NodeView::new);
+    public VerifyRepositoryResponse(List<NodeView> nodes) {
+        this.nodes = nodes;
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
-        super.writeTo(out);
         out.writeList(nodes);
     }
 
@@ -168,19 +158,15 @@ public class VerifyRepositoryResponse extends ActionResponse implements ToXConte
     }
 
     @Override
-    public boolean equals(Object obj) {
-        if (obj == null) {
-            return false;
-        }
-        if (getClass() != obj.getClass()) {
-            return false;
-        }
-        VerifyRepositoryResponse other = (VerifyRepositoryResponse) obj;
-        return nodes.equals(other.nodes);
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        VerifyRepositoryResponse that = (VerifyRepositoryResponse) o;
+        return Objects.equals(nodes, that.nodes);
     }
 
     @Override
     public int hashCode() {
-        return nodes.hashCode();
+        return Objects.hash(nodes);
     }
 }

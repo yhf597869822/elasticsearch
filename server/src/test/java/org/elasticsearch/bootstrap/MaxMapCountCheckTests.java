@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.bootstrap;
@@ -25,11 +14,11 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.core.LogEvent;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.apache.lucene.util.Constants;
-import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.common.io.PathUtils;
 import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.test.ESTestCase;
+import org.elasticsearch.test.AbstractBootstrapCheckTestCase;
 import org.elasticsearch.test.MockLogAppender;
 
 import java.io.BufferedReader;
@@ -48,7 +37,7 @@ import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-public class MaxMapCountCheckTests extends ESTestCase {
+public class MaxMapCountCheckTests extends AbstractBootstrapCheckTestCase {
 
     // initialize as if the max map count is under the limit, tests can override by setting maxMapCount before executing the check
     private final AtomicLong maxMapCount = new AtomicLong(randomIntBetween(1, Math.toIntExact(BootstrapChecks.MaxMapCountCheck.LIMIT) - 1));
@@ -69,29 +58,29 @@ public class MaxMapCountCheckTests extends ESTestCase {
     }
 
     public void testMaxMapCountCheckBelowLimit() {
-        assertFailure(check.check(BootstrapChecksTests.defaultContext));
+        assertFailure(check.check(emptyContext));
     }
 
     public void testMaxMapCountCheckBelowLimitAndMemoryMapAllowed() {
         /*
          * There are two ways that memory maps are allowed:
          *  - by default
-         *  - mmapfs is explicitly allowed
-         * We want to test that if mmapfs is allowed then the max map count check is enforced.
+         *  - mmap is explicitly allowed
+         * We want to test that if mmap is allowed then the max map count check is enforced.
          */
         final List<Settings> settingsThatAllowMemoryMap = new ArrayList<>();
         settingsThatAllowMemoryMap.add(Settings.EMPTY);
-        settingsThatAllowMemoryMap.add(Settings.builder().put("node.store.allow_mmapfs", true).build());
+        settingsThatAllowMemoryMap.add(Settings.builder().put("node.store.allow_mmap", true).build());
 
         for (final Settings settingThatAllowsMemoryMap : settingsThatAllowMemoryMap) {
-            assertFailure(check.check(new BootstrapContext(settingThatAllowsMemoryMap, MetaData.EMPTY_META_DATA)));
+            assertFailure(check.check(createTestContext(settingThatAllowsMemoryMap, Metadata.EMPTY_METADATA)));
         }
     }
 
     public void testMaxMapCountCheckNotEnforcedIfMemoryMapNotAllowed() {
-        // nothing should happen if current vm.max_map_count is under the limit but mmapfs is not allowed
-        final Settings settings = Settings.builder().put("node.store.allow_mmapfs", false).build();
-        final BootstrapContext context = new BootstrapContext(settings, MetaData.EMPTY_META_DATA);
+        // nothing should happen if current vm.max_map_count is under the limit but mmap is not allowed
+        final Settings settings = Settings.builder().put("node.store.allow_mmap", false).build();
+        final BootstrapContext context = createTestContext(settings, Metadata.EMPTY_METADATA);
         final BootstrapCheck.BootstrapCheckResult result = check.check(context);
         assertTrue(result.isSuccess());
     }
@@ -99,14 +88,14 @@ public class MaxMapCountCheckTests extends ESTestCase {
     public void testMaxMapCountCheckAboveLimit() {
         // nothing should happen if current vm.max_map_count exceeds the limit
         maxMapCount.set(randomIntBetween(Math.toIntExact(BootstrapChecks.MaxMapCountCheck.LIMIT) + 1, Integer.MAX_VALUE));
-        final BootstrapCheck.BootstrapCheckResult result = check.check(BootstrapChecksTests.defaultContext);
+        final BootstrapCheck.BootstrapCheckResult result = check.check(emptyContext);
         assertTrue(result.isSuccess());
     }
 
     public void testMaxMapCountCheckMaxMapCountNotAvailable() {
         // nothing should happen if current vm.max_map_count is not available
         maxMapCount.set(-1);
-        final BootstrapCheck.BootstrapCheckResult result = check.check(BootstrapChecksTests.defaultContext);
+        final BootstrapCheck.BootstrapCheckResult result = check.check(emptyContext);
         assertTrue(result.isSuccess());
     }
 

@@ -1,12 +1,14 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.core.deprecation;
 
 
 import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
@@ -23,9 +25,14 @@ import java.util.Objects;
 public class DeprecationIssue implements Writeable, ToXContentObject {
 
     public enum Level implements Writeable {
-        NONE,
-        INFO,
+        /**
+         * Resolving this issue is advised but not required to upgrade. There may be undesired changes in behavior unless this issue is
+         * resolved before upgrading.
+         */
         WARNING,
+        /**
+         * This issue must be resolved to upgrade. Failures will occur unless this is resolved before upgrading.
+         */
         CRITICAL
         ;
 
@@ -131,6 +138,11 @@ public class DeprecationIssue implements Writeable, ToXContentObject {
     @Override
     public int hashCode() {
         return Objects.hash(level, message, url, details);
+    }
+
+    @Override
+    public String toString() {
+        return Strings.toString(this);
     }
 }
 

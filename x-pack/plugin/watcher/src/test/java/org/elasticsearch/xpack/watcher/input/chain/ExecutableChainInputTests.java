@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.watcher.input.chain;
 
@@ -15,10 +16,10 @@ import org.elasticsearch.xpack.core.watcher.input.ExecutableInput;
 import org.elasticsearch.xpack.core.watcher.input.Input;
 import org.elasticsearch.xpack.core.watcher.watch.Payload;
 import org.elasticsearch.xpack.watcher.input.simple.SimpleInput;
-import org.joda.time.DateTime;
-import org.joda.time.DateTimeZone;
 
 import java.io.IOException;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.Arrays;
 
 import static org.elasticsearch.xpack.core.watcher.input.Input.Result.Status;
@@ -62,7 +63,7 @@ public class ExecutableChainInputTests extends ESTestCase {
     }
 
     private WatchExecutionContext createWatchExecutionContext() {
-        DateTime now = DateTime.now(DateTimeZone.UTC);
+        ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
         Wid wid = new Wid(randomAlphaOfLength(5), now);
         return mockExecutionContextBuilder(wid.watchId())
                 .wid(wid)

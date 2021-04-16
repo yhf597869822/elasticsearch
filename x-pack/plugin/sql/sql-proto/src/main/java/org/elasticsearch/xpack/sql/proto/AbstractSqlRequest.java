@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.sql.proto;
 
@@ -16,14 +17,26 @@ import java.util.Objects;
  */
 public abstract class AbstractSqlRequest implements ToXContentFragment {
 
-    private final Mode mode;
+    private final RequestInfo requestInfo;
 
-    protected AbstractSqlRequest(Mode mode) {
-        this.mode = mode;
+    protected AbstractSqlRequest(RequestInfo requestInfo) {
+        this.requestInfo = requestInfo;
+    }
+
+    public RequestInfo requestInfo() {
+        return requestInfo;
     }
 
     public Mode mode() {
-        return mode;
+        return requestInfo.mode();
+    }
+
+    public String clientId() {
+        return requestInfo.clientId();
+    }
+
+    public SqlVersion version() {
+        return requestInfo.version();
     }
 
     @Override
@@ -31,12 +44,12 @@ public abstract class AbstractSqlRequest implements ToXContentFragment {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         AbstractSqlRequest that = (AbstractSqlRequest) o;
-        return mode == that.mode;
+        return Objects.equals(requestInfo, that.requestInfo);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(mode);
+        return requestInfo.hashCode();
     }
 
 }

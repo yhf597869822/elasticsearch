@@ -1,38 +1,46 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.ml.job.persistence;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.bulk.BulkAction;
-import org.elasticsearch.action.bulk.BulkItemResponse;
-import org.elasticsearch.action.bulk.BulkRequestBuilder;
-import org.elasticsearch.action.bulk.BulkResponse;
 import org.elasticsearch.action.support.IndicesOptions;
-import org.elasticsearch.action.support.WriteRequest;
 import org.elasticsearch.client.Client;
+import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.util.concurrent.ThreadContext;
-import org.elasticsearch.index.query.ConstantScoreQueryBuilder;
+import org.elasticsearch.index.query.BoolQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
+import org.elasticsearch.index.reindex.AbstractBulkByScrollRequest;
+import org.elasticsearch.index.reindex.BulkByScrollResponse;
+import org.elasticsearch.index.reindex.BulkByScrollTask;
 import org.elasticsearch.index.reindex.DeleteByQueryAction;
 import org.elasticsearch.index.reindex.DeleteByQueryRequest;
+import org.elasticsearch.xpack.core.ml.annotations.Annotation;
+import org.elasticsearch.xpack.core.ml.annotations.AnnotationIndex;
+import org.elasticsearch.xpack.core.ml.datafeed.DatafeedTimingStats;
+import org.elasticsearch.xpack.core.ml.job.config.Job;
 import org.elasticsearch.xpack.core.ml.job.persistence.AnomalyDetectorsIndex;
 import org.elasticsearch.xpack.core.ml.job.persistence.ElasticsearchMappings;
 import org.elasticsearch.xpack.core.ml.job.process.autodetect.state.ModelSnapshot;
-import org.elasticsearch.xpack.core.ml.job.process.autodetect.state.ModelState;
 import org.elasticsearch.xpack.core.ml.job.results.Result;
+import org.elasticsearch.xpack.core.security.user.XPackUser;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 import static org.elasticsearch.xpack.core.ClientHelper.ML_ORIGIN;
 import static org.elasticsearch.xpack.core.ClientHelper.executeAsyncWithOrigin;
-import static org.elasticsearch.xpack.core.ClientHelper.stashWithOrigin;
 
 public class JobDataDeleter {
 
@@ -51,69 +59,87 @@ public class JobDataDeleter {
      *
      * @param modelSnapshots the model snapshots to delete
      */
-    public void deleteModelSnapshots(List<ModelSnapshot> modelSnapshots, ActionListener<BulkResponse> listener) {
+    public void deleteModelSnapshots(List<ModelSnapshot> modelSnapshots, ActionListener<BulkByScrollResponse> listener) {
         if (modelSnapshots.isEmpty()) {
-            listener.onResponse(new BulkResponse(new BulkItemResponse[0], 0L));
+            listener.onResponse(new BulkByScrollResponse(TimeValue.ZERO,
+                new BulkByScrollTask.Status(Collections.emptyList(), null),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                false));
             return;
         }
 
-        String stateIndexName = AnomalyDetectorsIndex.jobStateIndexName();
+        String stateIndexName = AnomalyDetectorsIndex.jobStateIndexPattern();
 
-        // TODO: remove in 7.0
-        ActionListener<BulkResponse> docDeleteListener = ActionListener.wrap(
-                response -> {
-                    // if the doc delete worked then don't bother trying the old types
-                    if (response.hasFailures() == false) {
-                        listener.onResponse(response);
-                        return;
-                    }
-                    BulkRequestBuilder bulkRequestBuilder = client.prepareBulk();
-                    for (ModelSnapshot modelSnapshot : modelSnapshots) {
-                        for (String stateDocId : modelSnapshot.legacyStateDocumentIds()) {
-                            bulkRequestBuilder.add(client.prepareDelete(stateIndexName, ModelState.TYPE, stateDocId));
-                        }
-
-                        bulkRequestBuilder.add(client.prepareDelete(AnomalyDetectorsIndex.jobResultsAliasedName(modelSnapshot.getJobId()),
-                                ModelSnapshot.TYPE.getPreferredName(), ModelSnapshot.v54DocumentId(modelSnapshot)));
-                    }
-
-                    bulkRequestBuilder.setRefreshPolicy(WriteRequest.RefreshPolicy.IMMEDIATE);
-                    try {
-                        bulkRequestBuilder.execute(ActionListener.wrap(
-                                listener::onResponse,
-                                // ignore problems relating to single type indices - if we're running against a single type
-                                // index then it must be type doc, so just return the response from deleting that type
-                                e -> {
-                                    if (e instanceof IllegalArgumentException
-                                            && e.getMessage().contains("as the final mapping would have more than 1 type")) {
-                                        listener.onResponse(response);
-                                    }
-                                    listener.onFailure(e);
-                                }
-                        ));
-                    } catch (Exception e) {
-                        listener.onFailure(e);
-                    }
-                },
-                listener::onFailure
-        );
-
-        BulkRequestBuilder bulkRequestBuilder = client.prepareBulk();
+        List<String> idsToDelete = new ArrayList<>();
+        Set<String> indices = new HashSet<>();
+        indices.add(stateIndexName);
+        indices.add(AnnotationIndex.READ_ALIAS_NAME);
         for (ModelSnapshot modelSnapshot : modelSnapshots) {
-            for (String stateDocId : modelSnapshot.stateDocumentIds()) {
-                bulkRequestBuilder.add(client.prepareDelete(stateIndexName, ElasticsearchMappings.DOC_TYPE, stateDocId));
-            }
-
-            bulkRequestBuilder.add(client.prepareDelete(AnomalyDetectorsIndex.jobResultsAliasedName(modelSnapshot.getJobId()),
-                    ElasticsearchMappings.DOC_TYPE, ModelSnapshot.documentId(modelSnapshot)));
+            idsToDelete.addAll(modelSnapshot.stateDocumentIds());
+            idsToDelete.add(ModelSnapshot.documentId(modelSnapshot));
+            idsToDelete.add(ModelSnapshot.annotationDocumentId(modelSnapshot));
+            indices.add(AnomalyDetectorsIndex.jobResultsAliasedName(modelSnapshot.getJobId()));
         }
 
-        bulkRequestBuilder.setRefreshPolicy(WriteRequest.RefreshPolicy.IMMEDIATE);
-        try {
-            executeAsyncWithOrigin(client, ML_ORIGIN, BulkAction.INSTANCE, bulkRequestBuilder.request(), docDeleteListener);
-        } catch (Exception e) {
-            listener.onFailure(e);
+        DeleteByQueryRequest deleteByQueryRequest = new DeleteByQueryRequest(indices.toArray(new String[0]))
+            .setRefresh(true)
+            .setIndicesOptions(IndicesOptions.lenientExpandOpen())
+            .setQuery(QueryBuilders.idsQuery().addIds(idsToDelete.toArray(new String[0])));
+
+        // _doc is the most efficient sort order and will also disable scoring
+        deleteByQueryRequest.getSearchRequest().source().sort(ElasticsearchMappings.ES_DOC);
+
+        executeAsyncWithOrigin(client, ML_ORIGIN, DeleteByQueryAction.INSTANCE, deleteByQueryRequest, listener);
+    }
+
+    /**
+     * Asynchronously delete all the auto-generated (i.e. created by the _xpack user) annotations
+     *
+     * @param listener Response listener
+     */
+    public void deleteAllAnnotations(ActionListener<Boolean> listener) {
+        deleteAnnotationsFromTime(null, null, listener);
+    }
+
+    /**
+     * Asynchronously delete all the auto-generated (i.e. created by the _xpack user) annotations starting from {@code cutOffTime}
+     *
+     * @param cutoffEpochMs Only annotations at and after this time will be deleted. If {@code null}, no cutoff is applied
+     * @param eventsToDelete Only annotations with one of the provided event types will be deleted.
+     *                       If {@code null} or empty, no event-related filtering is applied
+     * @param listener Response listener
+     */
+    public void deleteAnnotationsFromTime(@Nullable Long cutoffEpochMs,
+                                          @Nullable Set<String> eventsToDelete,
+                                          ActionListener<Boolean> listener) {
+        BoolQueryBuilder boolQuery =
+            QueryBuilders.boolQuery()
+                .filter(QueryBuilders.termQuery(Job.ID.getPreferredName(), jobId))
+                .filter(QueryBuilders.termQuery(Annotation.CREATE_USERNAME.getPreferredName(), XPackUser.NAME));
+        if (cutoffEpochMs != null) {
+            boolQuery.filter(QueryBuilders.rangeQuery(Result.TIMESTAMP.getPreferredName()).gte(cutoffEpochMs));
         }
+        if (eventsToDelete != null && eventsToDelete.isEmpty() == false) {
+            boolQuery.filter(QueryBuilders.termsQuery(Annotation.EVENT.getPreferredName(), eventsToDelete));
+        }
+        QueryBuilder query = QueryBuilders.constantScoreQuery(boolQuery);
+        DeleteByQueryRequest dbqRequest = new DeleteByQueryRequest(AnnotationIndex.READ_ALIAS_NAME)
+            .setQuery(query)
+            .setIndicesOptions(IndicesOptions.lenientExpandOpen())
+            .setAbortOnVersionConflict(false)
+            .setRefresh(true)
+            .setSlices(AbstractBulkByScrollRequest.AUTO_SLICES);
+
+        // _doc is the most efficient sort order and will also disable scoring
+        dbqRequest.getSearchRequest().source().sort(ElasticsearchMappings.ES_DOC);
+
+        executeAsyncWithOrigin(
+            client,
+            ML_ORIGIN,
+            DeleteByQueryAction.INSTANCE,
+            dbqRequest,
+            ActionListener.wrap(r -> listener.onResponse(true), listener::onFailure));
     }
 
     /**
@@ -123,46 +149,63 @@ public class JobDataDeleter {
      * @param listener Response listener
      */
     public void deleteResultsFromTime(long cutoffEpochMs, ActionListener<Boolean> listener) {
-        DeleteByQueryHolder deleteByQueryHolder = new DeleteByQueryHolder(AnomalyDetectorsIndex.jobResultsAliasedName(jobId));
-        deleteByQueryHolder.dbqRequest.setRefresh(true);
-
         QueryBuilder query = QueryBuilders.boolQuery()
-                .filter(QueryBuilders.existsQuery(Result.RESULT_TYPE.getPreferredName()))
-                .filter(QueryBuilders.rangeQuery(Result.TIMESTAMP.getPreferredName()).gte(cutoffEpochMs));
-        deleteByQueryHolder.dbqRequest.setIndicesOptions(IndicesOptions.lenientExpandOpen());
-        deleteByQueryHolder.dbqRequest.setQuery(query);
-        executeAsyncWithOrigin(client, ML_ORIGIN, DeleteByQueryAction.INSTANCE, deleteByQueryHolder.dbqRequest,
-                ActionListener.wrap(r -> listener.onResponse(true), listener::onFailure));
+            .filter(QueryBuilders.existsQuery(Result.RESULT_TYPE.getPreferredName()))
+            .filter(QueryBuilders.rangeQuery(Result.TIMESTAMP.getPreferredName()).gte(cutoffEpochMs));
+        DeleteByQueryRequest dbqRequest = new DeleteByQueryRequest(AnomalyDetectorsIndex.jobResultsAliasedName(jobId))
+            .setQuery(query)
+            .setIndicesOptions(IndicesOptions.lenientExpandOpen())
+            .setAbortOnVersionConflict(false)
+            .setRefresh(true)
+            .setSlices(AbstractBulkByScrollRequest.AUTO_SLICES);
+
+        // _doc is the most efficient sort order and will also disable scoring
+        dbqRequest.getSearchRequest().source().sort(ElasticsearchMappings.ES_DOC);
+
+        executeAsyncWithOrigin(
+            client,
+            ML_ORIGIN,
+            DeleteByQueryAction.INSTANCE,
+            dbqRequest,
+            ActionListener.wrap(r -> listener.onResponse(true), listener::onFailure));
     }
 
     /**
      * Delete all results marked as interim
      */
     public void deleteInterimResults() {
-        DeleteByQueryHolder deleteByQueryHolder = new DeleteByQueryHolder(AnomalyDetectorsIndex.jobResultsAliasedName(jobId));
-        deleteByQueryHolder.dbqRequest.setRefresh(false);
+        QueryBuilder query = QueryBuilders.constantScoreQuery(QueryBuilders.termQuery(Result.IS_INTERIM.getPreferredName(), true));
+        DeleteByQueryRequest dbqRequest = new DeleteByQueryRequest(AnomalyDetectorsIndex.jobResultsAliasedName(jobId))
+            .setQuery(query)
+            .setIndicesOptions(IndicesOptions.lenientExpandOpen())
+            .setAbortOnVersionConflict(false)
+            .setRefresh(false)
+            .setSlices(AbstractBulkByScrollRequest.AUTO_SLICES);
 
-        deleteByQueryHolder.dbqRequest.setIndicesOptions(IndicesOptions.lenientExpandOpen());
-        QueryBuilder qb = QueryBuilders.termQuery(Result.IS_INTERIM.getPreferredName(), true);
-        deleteByQueryHolder.dbqRequest.setQuery(new ConstantScoreQueryBuilder(qb));
+        // _doc is the most efficient sort order and will also disable scoring
+        dbqRequest.getSearchRequest().source().sort(ElasticsearchMappings.ES_DOC);
 
-        try (ThreadContext.StoredContext ignore = stashWithOrigin(client.threadPool().getThreadContext(), ML_ORIGIN)) {
-            client.execute(DeleteByQueryAction.INSTANCE, deleteByQueryHolder.dbqRequest).get();
+        try (ThreadContext.StoredContext ignore = client.threadPool().getThreadContext().stashWithOrigin(ML_ORIGIN)) {
+            client.execute(DeleteByQueryAction.INSTANCE, dbqRequest).get();
         } catch (Exception e) {
             LOGGER.error("[" + jobId + "] An error occurred while deleting interim results", e);
         }
     }
 
-    // Wrapper to ensure safety
-    private static class DeleteByQueryHolder {
+    /**
+     * Delete the datafeed timing stats document from all the job results indices
+     *
+     * @param listener Response listener
+     */
+    public void deleteDatafeedTimingStats(ActionListener<BulkByScrollResponse> listener) {
+        DeleteByQueryRequest deleteByQueryRequest = new DeleteByQueryRequest(AnomalyDetectorsIndex.jobResultsAliasedName(jobId))
+            .setRefresh(true)
+            .setIndicesOptions(IndicesOptions.lenientExpandOpen())
+            .setQuery(QueryBuilders.idsQuery().addIds(DatafeedTimingStats.documentId(jobId)));
 
-        private final DeleteByQueryRequest dbqRequest;
+        // _doc is the most efficient sort order and will also disable scoring
+        deleteByQueryRequest.getSearchRequest().source().sort(ElasticsearchMappings.ES_DOC);
 
-        private DeleteByQueryHolder(String index) {
-            dbqRequest = new DeleteByQueryRequest();
-            dbqRequest.indices(index);
-            dbqRequest.setSlices(5);
-            dbqRequest.setAbortOnVersionConflict(false);
-        }
+        executeAsyncWithOrigin(client, ML_ORIGIN, DeleteByQueryAction.INSTANCE, deleteByQueryRequest, listener);
     }
 }

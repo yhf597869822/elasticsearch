@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.core.security;
 
@@ -67,12 +68,12 @@ public final class ScrollHelper {
                             }
                         }
 
-                        if (results.size() > resp.getHits().getTotalHits()) {
+                        if (results.size() > resp.getHits().getTotalHits().value) {
                             clearScroll.accept(lastResponse);
                             listener.onFailure(new IllegalStateException("scrolling returned more hits [" + results.size()
-                                    + "] than expected [" + resp.getHits().getTotalHits() + "] so bailing out to prevent unbounded "
+                                    + "] than expected [" + resp.getHits().getTotalHits().value + "] so bailing out to prevent unbounded "
                                     + "memory consumption."));
-                        } else if (results.size() == resp.getHits().getTotalHits()) {
+                        } else if (results.size() == resp.getHits().getTotalHits().value) {
                             clearScroll.accept(resp);
                             // Finally, return the list of the entity
                             listener.onResponse(Collections.unmodifiableList(results));

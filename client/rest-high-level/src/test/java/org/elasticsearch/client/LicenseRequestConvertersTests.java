@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.client;
@@ -54,7 +43,7 @@ public class LicenseRequestConvertersTests extends ESTestCase {
 
         Request request = LicenseRequestConverters.getLicense(getLicenseRequest);
         assertThat(request.getMethod(), equalTo(HttpGet.METHOD_NAME));
-        assertThat(request.getEndpoint(), equalTo("/_xpack/license"));
+        assertThat(request.getEndpoint(), equalTo("/_license"));
         assertThat(request.getParameters(), equalTo(expectedParams));
         assertThat(request.getEntity(), is(nullValue()));
     }
@@ -72,7 +61,7 @@ public class LicenseRequestConvertersTests extends ESTestCase {
 
         Request request = LicenseRequestConverters.putLicense(putLicenseRequest);
         assertThat(request.getMethod(), equalTo(HttpPut.METHOD_NAME));
-        assertThat(request.getEndpoint(), equalTo("/_xpack/license"));
+        assertThat(request.getEndpoint(), equalTo("/_license"));
         assertThat(request.getParameters(), equalTo(expectedParams));
         assertThat(request.getEntity(), is(nullValue()));
     }
@@ -85,7 +74,7 @@ public class LicenseRequestConvertersTests extends ESTestCase {
 
         Request request = LicenseRequestConverters.deleteLicense(deleteLicenseRequest);
         assertThat(request.getMethod(), equalTo(HttpDelete.METHOD_NAME));
-        assertThat(request.getEndpoint(), equalTo("/_xpack/license"));
+        assertThat(request.getEndpoint(), equalTo("/_license"));
         assertThat(request.getParameters(), equalTo(expectedParams));
         assertThat(request.getEntity(), is(nullValue()));
     }
@@ -106,7 +95,7 @@ public class LicenseRequestConvertersTests extends ESTestCase {
         final Request restRequest = LicenseRequestConverters.startTrial(hlrcRequest);
 
         assertThat(restRequest.getMethod(), equalTo(HttpPost.METHOD_NAME));
-        assertThat(restRequest.getEndpoint(), equalTo("/_xpack/license/start_trial"));
+        assertThat(restRequest.getEndpoint(), equalTo("/_license/start_trial"));
         assertThat(restRequest.getParameters(), equalTo(expectedParams));
         assertThat(restRequest.getEntity(), nullValue());
     }
@@ -124,8 +113,24 @@ public class LicenseRequestConvertersTests extends ESTestCase {
         Request request = LicenseRequestConverters.startBasic(startBasicRequest);
 
         assertThat(request.getMethod(), equalTo(HttpPost.METHOD_NAME));
-        assertThat(request.getEndpoint(), equalTo("/_xpack/license/start_basic"));
+        assertThat(request.getEndpoint(), equalTo("/_license/start_basic"));
         assertThat(request.getParameters(), equalTo(expectedParams));
         assertThat(request.getEntity(), is(nullValue()));
+    }
+
+    public void testGetLicenseTrialStatus() {
+        Request request = LicenseRequestConverters.getLicenseTrialStatus();
+        assertEquals(HttpGet.METHOD_NAME, request.getMethod());
+        assertEquals("/_license/trial_status", request.getEndpoint());
+        assertEquals(request.getParameters().size(), 0);
+        assertNull(request.getEntity());
+    }
+
+    public void testGetLicenseBasicStatus() {
+        Request request = LicenseRequestConverters.getLicenseBasicStatus();
+        assertEquals(HttpGet.METHOD_NAME, request.getMethod());
+        assertEquals("/_license/basic_status", request.getEndpoint());
+        assertEquals(request.getParameters().size(), 0);
+        assertNull(request.getEntity());
     }
 }

@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.index.query;
@@ -34,6 +23,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+
+import static org.elasticsearch.index.query.SpanQueryBuilder.SpanQueryBuilderUtil.checkNoBoost;
 
 /**
  * Span query that matches the union of its clauses. Maps to {@link SpanOrQuery}.
@@ -113,9 +104,11 @@ public class SpanOrQueryBuilder extends AbstractQueryBuilder<SpanOrQueryBuilder>
                     while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
                         QueryBuilder query = parseInnerQueryBuilder(parser);
                         if (query instanceof SpanQueryBuilder == false) {
-                            throw new ParsingException(parser.getTokenLocation(), "spanOr [clauses] must be of type span query");
+                            throw new ParsingException(parser.getTokenLocation(), "span_or [clauses] must be of type span query");
                         }
-                        clauses.add((SpanQueryBuilder) query);
+                        final SpanQueryBuilder clause = (SpanQueryBuilder) query;
+                        checkNoBoost(NAME, currentFieldName, parser, clause);
+                        clauses.add(clause);
                     }
                 } else {
                     throw new ParsingException(parser.getTokenLocation(), "[span_or] query does not support [" + currentFieldName + "]");
@@ -132,7 +125,7 @@ public class SpanOrQueryBuilder extends AbstractQueryBuilder<SpanOrQueryBuilder>
         }
 
         if (clauses.isEmpty()) {
-            throw new ParsingException(parser.getTokenLocation(), "spanOr must include [clauses]");
+            throw new ParsingException(parser.getTokenLocation(), "span_or must include [clauses]");
         }
 
         SpanOrQueryBuilder queryBuilder = new SpanOrQueryBuilder(clauses.get(0));
@@ -145,7 +138,7 @@ public class SpanOrQueryBuilder extends AbstractQueryBuilder<SpanOrQueryBuilder>
     }
 
     @Override
-    protected Query doToQuery(QueryShardContext context) throws IOException {
+    protected Query doToQuery(SearchExecutionContext context) throws IOException {
         SpanQuery[] spanQueries = new SpanQuery[clauses.size()];
         for (int i = 0; i < clauses.size(); i++) {
             Query query = clauses.get(i).toQuery(context);

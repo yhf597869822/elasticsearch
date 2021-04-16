@@ -1,12 +1,13 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 
 package org.elasticsearch.xpack.core.ccr.action;
 
-import org.elasticsearch.action.Action;
+import org.elasticsearch.action.ActionType;
 import org.elasticsearch.action.ActionRequestValidationException;
 import org.elasticsearch.action.FailedNodeException;
 import org.elasticsearch.action.IndicesRequest;
@@ -24,37 +25,27 @@ import org.elasticsearch.xpack.core.ccr.ShardFollowNodeTaskStatus;
 
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
 
-public class FollowStatsAction extends Action<FollowStatsAction.StatsResponses> {
+public class FollowStatsAction extends ActionType<FollowStatsAction.StatsResponses> {
 
     public static final String NAME = "cluster:monitor/ccr/follow_stats";
 
     public static final FollowStatsAction INSTANCE = new FollowStatsAction();
 
     private FollowStatsAction() {
-        super(NAME);
-    }
-
-    @Override
-    public StatsResponses newResponse() {
-        return new StatsResponses();
+        super(NAME, FollowStatsAction.StatsResponses::new);
     }
 
     public static class StatsResponses extends BaseTasksResponse implements ToXContentObject {
 
-        private List<StatsResponse> statsResponse;
+        private final List<StatsResponse> statsResponse;
 
         public List<StatsResponse> getStatsResponses() {
             return statsResponse;
-        }
-
-        public StatsResponses() {
-            this(Collections.emptyList(), Collections.emptyList(), Collections.emptyList());
         }
 
         public StatsResponses(
@@ -63,6 +54,17 @@ public class FollowStatsAction extends Action<FollowStatsAction.StatsResponses> 
                 final List<StatsResponse> statsResponse) {
             super(taskFailures, nodeFailures);
             this.statsResponse = statsResponse;
+        }
+
+        public StatsResponses(StreamInput in) throws IOException {
+            super(in);
+            statsResponse = in.readList(StatsResponse::new);
+        }
+
+        @Override
+        public void writeTo(StreamOutput out) throws IOException {
+            super.writeTo(out);
+            out.writeList(statsResponse);
         }
 
         @Override
@@ -100,18 +102,6 @@ public class FollowStatsAction extends Action<FollowStatsAction.StatsResponses> 
         }
 
         @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
-            statsResponse = in.readList(StatsResponse::new);
-        }
-
-        @Override
-        public void writeTo(StreamOutput out) throws IOException {
-            super.writeTo(out);
-            out.writeList(statsResponse);
-        }
-
-        @Override
         public boolean equals(Object o) {
             if (this == o) return true;
             if (o == null || getClass() != o.getClass()) return false;
@@ -128,6 +118,19 @@ public class FollowStatsAction extends Action<FollowStatsAction.StatsResponses> 
     public static class StatsRequest extends BaseTasksRequest<StatsRequest> implements IndicesRequest {
 
         private String[] indices;
+
+        public StatsRequest() {}
+
+        public StatsRequest(StreamInput in) throws IOException {
+            super(in);
+            indices = in.readOptionalStringArray();
+        }
+
+        @Override
+        public void writeTo(StreamOutput out) throws IOException {
+            super.writeTo(out);
+            out.writeOptionalStringArray(indices);
+        }
 
         @Override
         public String[] indices() {
@@ -159,18 +162,6 @@ public class FollowStatsAction extends Action<FollowStatsAction.StatsResponses> 
         @Override
         public ActionRequestValidationException validate() {
             return null;
-        }
-
-        @Override
-        public void readFrom(final StreamInput in) throws IOException {
-            super.readFrom(in);
-            indices = in.readOptionalStringArray();
-        }
-
-        @Override
-        public void writeTo(StreamOutput out) throws IOException {
-            super.writeTo(out);
-            out.writeOptionalStringArray(indices);
         }
 
         @Override

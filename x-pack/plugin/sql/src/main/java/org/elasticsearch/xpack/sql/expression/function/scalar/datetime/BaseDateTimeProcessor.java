@@ -1,59 +1,49 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 
 package org.elasticsearch.xpack.sql.expression.function.scalar.datetime;
 
 import org.elasticsearch.common.io.stream.StreamInput;
-import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.xpack.ql.expression.gen.processor.Processor;
 import org.elasticsearch.xpack.sql.SqlIllegalArgumentException;
-import org.elasticsearch.xpack.sql.expression.gen.processor.Processor;
-import org.joda.time.ReadableInstant;
+import org.elasticsearch.xpack.sql.common.io.SqlStreamInput;
 
 import java.io.IOException;
-import java.util.TimeZone;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 
 public abstract class BaseDateTimeProcessor implements Processor {
 
-    private final TimeZone timeZone;
-    
-    BaseDateTimeProcessor(TimeZone timeZone) {
-        this.timeZone = timeZone;
+    private final ZoneId zoneId;
+
+    BaseDateTimeProcessor(ZoneId zoneId) {
+        this.zoneId = zoneId;
     }
-    
+
     BaseDateTimeProcessor(StreamInput in) throws IOException {
-        timeZone = TimeZone.getTimeZone(in.readString());
+        zoneId = SqlStreamInput.asSqlStream(in).zoneId();
+    }
+
+    ZoneId zoneId() {
+        return zoneId;
     }
 
     @Override
-    public void writeTo(StreamOutput out) throws IOException {
-        out.writeString(timeZone.getID());
-    }
-    
-    TimeZone timeZone() {
-        return timeZone;
-    }
-
-    @Override
-    public Object process(Object l) {
-        if (l == null) {
+    public Object process(Object input) {
+        if (input == null) {
             return null;
         }
-        long millis;
-        if (l instanceof String) {
-            // 6.4+
-            millis = Long.parseLong(l.toString());
-        } else if (l instanceof ReadableInstant) {
-            // 6.3-
-            millis = ((ReadableInstant) l).getMillis();
-        } else {
-            throw new SqlIllegalArgumentException("A string or a date is required; received {}", l);
+
+        if ((input instanceof ZonedDateTime) == false) {
+            throw new SqlIllegalArgumentException("A [date], a [time] or a [datetime] is required; received {}", input);
         }
-        
-        return doProcess(millis);
+
+        return doProcess(((ZonedDateTime) input).withZoneSameInstant(zoneId));
     }
 
-    abstract Object doProcess(long millis);
+    abstract Object doProcess(ZonedDateTime dateTime);
 }

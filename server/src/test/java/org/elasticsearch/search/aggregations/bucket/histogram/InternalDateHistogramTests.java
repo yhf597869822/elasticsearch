@@ -1,33 +1,21 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.search.aggregations.bucket.histogram;
 
-import org.elasticsearch.common.io.stream.Writeable;
+import org.elasticsearch.common.Rounding;
+import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.search.DocValueFormat;
 import org.elasticsearch.search.aggregations.BucketOrder;
 import org.elasticsearch.search.aggregations.InternalAggregations;
 import org.elasticsearch.test.InternalMultiBucketAggregationTestCase;
-import org.elasticsearch.search.aggregations.ParsedMultiBucketAggregation;
-import org.elasticsearch.search.aggregations.pipeline.PipelineAggregator;
-import org.joda.time.DateTime;
 
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -42,59 +30,112 @@ public class InternalDateHistogramTests extends InternalMultiBucketAggregationTe
 
     private boolean keyed;
     private DocValueFormat format;
+    private long intervalMillis;
+    private long baseMillis;
+    private long minDocCount;
+    private InternalDateHistogram.EmptyBucketInfo emptyBucketInfo;
 
     @Override
     public void setUp() throws Exception {
         super.setUp();
         keyed = randomBoolean();
         format = randomNumericDocValueFormat();
+        //in order for reduction to work properly (and be realistic) we need to use the same interval, minDocCount, emptyBucketInfo
+        //and base in all randomly created aggs as part of the same test run. This is particularly important when minDocCount is
+        //set to 0 as empty buckets need to be added to fill the holes.
+        long interval = randomIntBetween(1, 3);
+        intervalMillis = randomFrom(timeValueSeconds(interval), timeValueMinutes(interval), timeValueHours(interval)).getMillis();
+        Rounding rounding = Rounding.builder(TimeValue.timeValueMillis(intervalMillis)).build();
+        long now = System.currentTimeMillis();
+        baseMillis = rounding.prepare(now, now).round(now);
+        if (randomBoolean()) {
+            minDocCount = randomIntBetween(1, 10);
+            emptyBucketInfo = null;
+        } else {
+            minDocCount = 0;
+            LongBounds extendedBounds = null;
+            if (randomBoolean()) {
+                //it's ok if min and max are outside the range of the generated buckets, that will just mean that
+                //empty buckets won't be added before the first bucket and/or after the last one
+                long min = baseMillis - intervalMillis * randomNumberOfBuckets();
+                long max = baseMillis + randomNumberOfBuckets() * intervalMillis;
+                extendedBounds = new LongBounds(min, max);
+            }
+            emptyBucketInfo = new InternalDateHistogram.EmptyBucketInfo(rounding, InternalAggregations.EMPTY, extendedBounds);
+        }
     }
 
     @Override
     protected InternalDateHistogram createTestInstance(String name,
-                                                       List<PipelineAggregator> pipelineAggregators,
-                                                       Map<String, Object> metaData,
+                                                       Map<String, Object> metadata,
                                                        InternalAggregations aggregations) {
         int nbBuckets = randomNumberOfBuckets();
         List<InternalDateHistogram.Bucket> buckets = new ArrayList<>(nbBuckets);
-        long startingDate = System.currentTimeMillis();
-
-        long interval = randomIntBetween(1, 3);
-        long intervalMillis = randomFrom(timeValueSeconds(interval), timeValueMinutes(interval), timeValueHours(interval)).getMillis();
-
+        //avoid having different random instance start from exactly the same base
+        long startingDate = baseMillis - intervalMillis * randomNumberOfBuckets();
         for (int i = 0; i < nbBuckets; i++) {
-            long key = startingDate + (intervalMillis * i);
-            buckets.add(i, new InternalDateHistogram.Bucket(key, randomIntBetween(1, 100), keyed, format, aggregations));
+            //rarely leave some holes to be filled up with empty buckets in case minDocCount is set to 0
+            if (frequently()) {
+                long key = startingDate + intervalMillis * i;
+                buckets.add(new InternalDateHistogram.Bucket(key, randomIntBetween(1, 100), keyed, format, aggregations));
+            }
         }
-
-        BucketOrder order = randomFrom(BucketOrder.key(true), BucketOrder.key(false));
-        return new InternalDateHistogram(name, buckets, order, 1, 0L, null, format, keyed, pipelineAggregators, metaData);
+        BucketOrder order = BucketOrder.key(randomBoolean());
+        return new InternalDateHistogram(name, buckets, order, minDocCount, 0L, emptyBucketInfo, format, keyed, metadata);
     }
 
     @Override
     protected void assertReduced(InternalDateHistogram reduced, List<InternalDateHistogram> inputs) {
-        Map<Long, Long> expectedCounts = new TreeMap<>();
+        TreeMap<Long, Long> expectedCounts = new TreeMap<>();
         for (Histogram histogram : inputs) {
             for (Histogram.Bucket bucket : histogram.getBuckets()) {
-                expectedCounts.compute(((DateTime) bucket.getKey()).getMillis(),
+                expectedCounts.compute(((ZonedDateTime) bucket.getKey()).toInstant().toEpochMilli(),
                         (key, oldValue) -> (oldValue == null ? 0 : oldValue) + bucket.getDocCount());
             }
         }
+        if (minDocCount == 0) {
+            long minBound = -1;
+            long maxBound = -1;
+            if (emptyBucketInfo.bounds != null) {
+                Rounding.Prepared prepared = emptyBucketInfo.rounding.prepare(
+                    emptyBucketInfo.bounds.getMin(),
+                    emptyBucketInfo.bounds.getMax()
+                );
+                minBound = prepared.round(emptyBucketInfo.bounds.getMin());
+                maxBound = prepared.round(emptyBucketInfo.bounds.getMax());
+                if (expectedCounts.isEmpty() && minBound <= maxBound) {
+                    expectedCounts.put(minBound, 0L);
+                }
+            }
+            if (expectedCounts.isEmpty() == false) {
+                Long nextKey = expectedCounts.firstKey();
+                while (nextKey < expectedCounts.lastKey()) {
+                    expectedCounts.putIfAbsent(nextKey, 0L);
+                    nextKey += intervalMillis;
+                }
+                if (emptyBucketInfo.bounds != null) {
+                    while (minBound < expectedCounts.firstKey()) {
+                        expectedCounts.put(expectedCounts.firstKey() - intervalMillis, 0L);
+                    }
+                    while (expectedCounts.lastKey() < maxBound) {
+                        expectedCounts.put(expectedCounts.lastKey() + intervalMillis, 0L);
+                    }
+                }
+            }
+        } else {
+            expectedCounts.entrySet().removeIf(doubleLongEntry -> doubleLongEntry.getValue() < minDocCount);
+        }
+
         Map<Long, Long> actualCounts = new TreeMap<>();
         for (Histogram.Bucket bucket : reduced.getBuckets()) {
-            actualCounts.compute(((DateTime) bucket.getKey()).getMillis(),
+            actualCounts.compute(((ZonedDateTime) bucket.getKey()).toInstant().toEpochMilli(),
                     (key, oldValue) -> (oldValue == null ? 0 : oldValue) + bucket.getDocCount());
         }
         assertEquals(expectedCounts, actualCounts);
     }
 
     @Override
-    protected Writeable.Reader<InternalDateHistogram> instanceReader() {
-        return InternalDateHistogram::new;
-    }
-
-    @Override
-    protected Class<? extends ParsedMultiBucketAggregation> implementationClass() {
+    protected Class<ParsedDateHistogram> implementationClass() {
         return ParsedDateHistogram.class;
     }
 
@@ -105,8 +146,8 @@ public class InternalDateHistogramTests extends InternalMultiBucketAggregationTe
         BucketOrder order = instance.getOrder();
         long minDocCount = instance.getMinDocCount();
         long offset = instance.getOffset();
-        List<PipelineAggregator> pipelineAggregators = instance.pipelineAggregators();
-        Map<String, Object> metaData = instance.getMetaData();
+        InternalDateHistogram.EmptyBucketInfo emptyBucketInfo = instance.emptyBucketInfo;
+        Map<String, Object> metadata = instance.getMetadata();
         switch (between(0, 5)) {
         case 0:
             name += randomAlphaOfLength(5);
@@ -121,22 +162,22 @@ public class InternalDateHistogramTests extends InternalMultiBucketAggregationTe
             break;
         case 3:
             minDocCount += between(1, 10);
+            emptyBucketInfo = null;
             break;
         case 4:
             offset += between(1, 20);
             break;
         case 5:
-            if (metaData == null) {
-                metaData = new HashMap<>(1);
+            if (metadata == null) {
+                metadata = new HashMap<>(1);
             } else {
-                metaData = new HashMap<>(instance.getMetaData());
+                metadata = new HashMap<>(instance.getMetadata());
             }
-            metaData.put(randomAlphaOfLength(15), randomInt());
+            metadata.put(randomAlphaOfLength(15), randomInt());
             break;
         default:
             throw new AssertionError("Illegal randomisation branch");
         }
-        return new InternalDateHistogram(name, buckets, order, minDocCount, offset, null, format, keyed, pipelineAggregators,
-                metaData);
+        return new InternalDateHistogram(name, buckets, order, minDocCount, offset, emptyBucketInfo, format, keyed, metadata);
     }
 }

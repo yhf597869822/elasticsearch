@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.monitoring.exporter.http;
 
@@ -13,9 +14,10 @@ import org.elasticsearch.Version;
 import org.elasticsearch.client.Request;
 import org.elasticsearch.client.Response;
 import org.elasticsearch.client.ResponseException;
+import org.elasticsearch.client.ResponseListener;
 import org.elasticsearch.client.RestClient;
 import org.elasticsearch.cluster.ClusterState;
-import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.settings.Settings;
@@ -24,6 +26,7 @@ import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.xpack.core.monitoring.exporter.MonitoringTemplateUtils;
 import org.elasticsearch.xpack.monitoring.exporter.ClusterAlertsUtil;
 import org.elasticsearch.xpack.monitoring.exporter.Exporter;
+import org.elasticsearch.xpack.monitoring.exporter.http.HttpResource.ResourcePublishResult;
 import org.hamcrest.Description;
 import org.hamcrest.Matcher;
 import org.hamcrest.TypeSafeMatcher;
@@ -38,11 +41,12 @@ import java.util.stream.Collectors;
 import static org.elasticsearch.xpack.core.monitoring.exporter.MonitoringTemplateUtils.OLD_TEMPLATE_IDS;
 import static org.elasticsearch.xpack.core.monitoring.exporter.MonitoringTemplateUtils.PIPELINE_IDS;
 import static org.elasticsearch.xpack.core.monitoring.exporter.MonitoringTemplateUtils.TEMPLATE_IDS;
-import static org.elasticsearch.xpack.monitoring.exporter.http.PublishableHttpResource.CheckResponse.DOES_NOT_EXIST;
-import static org.elasticsearch.xpack.monitoring.exporter.http.PublishableHttpResource.CheckResponse.EXISTS;
+import static org.elasticsearch.xpack.monitoring.exporter.http.AsyncHttpResourceHelper.whenPerformRequestAsyncWith;
+import static org.elasticsearch.xpack.monitoring.exporter.http.AsyncHttpResourceHelper.wrapMockListener;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.startsWith;
+import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.argThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -81,7 +85,7 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
 
     private final MultiHttpResource resources =
             HttpExporter.createResources(
-                    new Exporter.Config("_http", "http", exporterSettings, clusterService, licenseState));
+                    new Exporter.Config("_http", "http", exporterSettings, clusterService, licenseState)).allResources;
 
     @Before
     public void setupResources() {
@@ -100,15 +104,28 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
         assertThat("Not all watches are supplied", watchNames, hasSize(EXPECTED_WATCHES));
     }
 
-    public void testInvalidVersionBlocks() throws IOException {
-        final HttpEntity entity = new StringEntity("{\"version\":{\"number\":\"unknown\"}}", ContentType.APPLICATION_JSON);
+    public void awaitCheckAndPublish(final Boolean expected) {
+        awaitCheckAndPublish(resources, expected);
+    }
+
+    public void awaitCheckAndPublish(HttpResource resource, final Boolean expected) {
+        awaitCheckAndPublish(resource, expected != null ? new ResourcePublishResult(expected) : null);
+    }
+
+    public void awaitCheckAndPublish(HttpResource resource, final ResourcePublishResult expected) {
+        resource.checkAndPublish(client, wrapMockListener(publishListener));
+        verifyPublishListener(expected);
+    }
+
+    public void testInvalidVersionBlocks() {
+        final HttpEntity entity = new StringEntity("{\"version\":{\"number\":\"3.0.0\"}}", ContentType.APPLICATION_JSON);
 
         when(versionResponse.getEntity()).thenReturn(entity);
-        when(client.performRequest(argThat(new RequestMatcher(is("GET"), is("/")))))
-            .thenReturn(versionResponse);
+        whenPerformRequestAsyncWith(client, new RequestMatcher(is("GET"), is("/")), versionResponse);
 
         assertTrue(resources.isDirty());
-        assertFalse(resources.checkAndPublish(client));
+        awaitCheckAndPublish(resources, new ResourcePublishResult(false,
+            "version [3.0.0] < [7.0.0] and NOT supported for [xpack.monitoring.exporters._http]", HttpResource.State.DIRTY));
         // ensure it didn't magically become clean
         assertTrue(resources.isDirty());
 
@@ -116,7 +133,7 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
         verifyNoMoreInteractions(client);
     }
 
-    public void testTemplateCheckBlocksAfterSuccessfulVersion() throws IOException {
+    public void testTemplateCheckBlocksAfterSuccessfulVersion() {
         final Exception exception = failureGetException();
         final boolean firstSucceeds = randomBoolean();
         int expectedGets = 1;
@@ -144,20 +161,18 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
             final List<Response> otherResponses = getTemplateResponses(1, successful, unsuccessful);
 
             // last check fails implies that N - 2 publishes succeeded!
-            when(client.performRequest(argThat(new RequestMatcher(is("GET"), startsWith("/_template/")))))
-                .thenReturn(first, otherResponses.toArray(new Response[otherResponses.size()]))
-                .thenThrow(exception);
+            whenPerformRequestAsyncWith(client, new RequestMatcher(is("GET"), startsWith("/_template/")),
+                                        first, otherResponses, exception);
             whenSuccessfulPutTemplates(otherResponses.size() + 1);
 
             expectedGets += 1 + successful + unsuccessful;
             expectedPuts = (successfulFirst ? 0 : 1) + unsuccessful;
         } else {
-            when(client.performRequest(argThat(new RequestMatcher(is("GET"), startsWith("/_template/")))))
-                    .thenThrow(exception);
+            whenPerformRequestAsyncWith(client, new RequestMatcher(is("GET"), startsWith("/_template/")), exception);
         }
 
         assertTrue(resources.isDirty());
-        assertFalse(resources.checkAndPublish(client));
+        awaitCheckAndPublish(null);
         // ensure it didn't magically become not-dirty
         assertTrue(resources.isDirty());
 
@@ -167,7 +182,7 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
         verifyNoMoreInteractions(client);
     }
 
-    public void testTemplatePublishBlocksAfterSuccessfulVersion() throws IOException {
+    public void testTemplatePublishBlocksAfterSuccessfulVersion() {
         final Exception exception = failurePutException();
         final boolean firstSucceeds = randomBoolean();
         int expectedGets = 1;
@@ -189,9 +204,8 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
             whenGetTemplates(successful, unsuccessful + 2);
 
             // previous publishes must have succeeded
-            when(client.performRequest(argThat(new RequestMatcher(is("PUT"), startsWith("/_template/")))))
-                    .thenReturn(firstSuccess, otherResponses.toArray(new Response[otherResponses.size()]))
-                    .thenThrow(exception);
+            whenPerformRequestAsyncWith(client, new RequestMatcher(is("PUT"), startsWith("/_template/")),
+                                        firstSuccess, otherResponses, exception);
 
             // GETs required for each PUT attempt (first is guaranteed "unsuccessful")
             expectedGets += successful + unsuccessful + 1;
@@ -201,12 +215,11 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
             // fail the check so that it has to attempt the PUT
             whenGetTemplates(0, 1);
 
-            when(client.performRequest(argThat(new RequestMatcher(is("PUT"), startsWith("/_template/")))))
-                    .thenThrow(exception);
+            whenPerformRequestAsyncWith(client, new RequestMatcher(is("PUT"), startsWith("/_template/")), exception);
         }
 
         assertTrue(resources.isDirty());
-        assertFalse(resources.checkAndPublish(client));
+        awaitCheckAndPublish(null);
         // ensure it didn't magically become not-dirty
         assertTrue(resources.isDirty());
 
@@ -216,7 +229,7 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
         verifyNoMoreInteractions(client);
     }
 
-    public void testPipelineCheckBlocksAfterSuccessfulTemplates() throws IOException {
+    public void testPipelineCheckBlocksAfterSuccessfulTemplates() {
         final int successfulGetTemplates = randomIntBetween(0, EXPECTED_TEMPLATES);
         final int unsuccessfulGetTemplates = EXPECTED_TEMPLATES - successfulGetTemplates;
         final Exception exception = failureGetException();
@@ -242,9 +255,7 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
             }
 
             // last check fails
-            when(client.performRequest(argThat(new RequestMatcher(is("GET"), startsWith("/_ingest/pipeline/")))))
-                    .thenReturn(first)
-                    .thenThrow(exception);
+            whenPerformRequestAsyncWith(client, new RequestMatcher(is("GET"), startsWith("/_ingest/pipeline/")), first, exception);
             if (successfulFirst == false) {
                 whenSuccessfulPutPipelines(1);
             }
@@ -252,12 +263,11 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
             expectedGets = EXPECTED_PIPELINES;
             expectedPuts = successfulFirst ? 0 : 1;
         } else {
-            when(client.performRequest(argThat(new RequestMatcher(is("GET"), startsWith("/_ingest/pipeline/")))))
-                    .thenThrow(exception);
+            whenPerformRequestAsyncWith(client, new RequestMatcher(is("GET"), startsWith("/_ingest/pipeline/")), exception);
         }
 
         assertTrue(resources.isDirty());
-        assertFalse(resources.checkAndPublish(client));
+        awaitCheckAndPublish(null);
         // ensure it didn't magically become not-dirty
         assertTrue(resources.isDirty());
 
@@ -269,7 +279,7 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
         verifyNoMoreInteractions(client);
     }
 
-    public void testPipelinePublishBlocksAfterSuccessfulTemplates() throws IOException {
+    public void testPipelinePublishBlocksAfterSuccessfulTemplates() {
         final int successfulGetTemplates = randomIntBetween(0, EXPECTED_TEMPLATES);
         final int unsuccessfulGetTemplates = EXPECTED_TEMPLATES - successfulGetTemplates;
         final Exception exception = failurePutException();
@@ -289,9 +299,7 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
             whenGetPipelines(0, 2);
 
             // previous publishes must have succeeded
-            when(client.performRequest(argThat(new RequestMatcher(is("PUT"), startsWith("/_ingest/pipeline/")))))
-                    .thenReturn(firstSuccess)
-                    .thenThrow(exception);
+            whenPerformRequestAsyncWith(client, new RequestMatcher(is("PUT"), startsWith("/_ingest/pipeline/")), firstSuccess, exception);
 
             // GETs required for each PUT attempt (first is guaranteed "unsuccessful")
             expectedGets += 1;
@@ -301,12 +309,11 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
             // fail the check so that it has to attempt the PUT
             whenGetPipelines(0, 1);
 
-            when(client.performRequest(argThat(new RequestMatcher(is("PUT"), startsWith("/_ingest/pipeline/")))))
-                    .thenThrow(exception);
+            whenPerformRequestAsyncWith(client, new RequestMatcher(is("PUT"), startsWith("/_ingest/pipeline/")), exception);
         }
 
         assertTrue(resources.isDirty());
-        assertFalse(resources.checkAndPublish(client));
+        awaitCheckAndPublish(null);
         // ensure it didn't magically become not-dirty
         assertTrue(resources.isDirty());
 
@@ -318,7 +325,7 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
         verifyNoMoreInteractions(client);
     }
 
-    public void testWatcherCheckBlocksAfterSuccessfulPipelines() throws IOException {
+    public void testWatcherCheckBlocksAfterSuccessfulPipelines() {
         final int successfulGetTemplates = randomIntBetween(0, EXPECTED_TEMPLATES);
         final int unsuccessfulGetTemplates = EXPECTED_TEMPLATES - successfulGetTemplates;
         final int successfulGetPipelines = randomIntBetween(0, EXPECTED_PIPELINES);
@@ -332,11 +339,10 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
         whenSuccessfulPutPipelines(unsuccessfulGetPipelines);
 
         // there's only one check
-        when(client.performRequest(argThat(new RequestMatcher(is("GET"), is("/_xpack")))))
-                .thenThrow(exception);
+        whenPerformRequestAsyncWith(client, new RequestMatcher(is("GET"), is("/_xpack")), exception);
 
         assertTrue(resources.isDirty());
-        assertFalse(resources.checkAndPublish(client));
+        awaitCheckAndPublish(null);
         // ensure it didn't magically become not-dirty
         assertTrue(resources.isDirty());
 
@@ -349,7 +355,7 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
         verifyNoMoreInteractions(client);
     }
 
-    public void testWatchCheckBlocksAfterSuccessfulWatcherCheck() throws IOException {
+    public void testWatchCheckBlocksAfterSuccessfulWatcherCheck() {
         final int successfulGetTemplates = randomIntBetween(0, EXPECTED_TEMPLATES);
         final int unsuccessfulGetTemplates = EXPECTED_TEMPLATES - successfulGetTemplates;
         final int successfulGetPipelines = randomIntBetween(0, EXPECTED_PIPELINES);
@@ -381,37 +387,34 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
                 final List<Response> otherResponses = getWatcherResponses(1, successful, unsuccessful);
 
                 // last check fails implies that N - 2 publishes succeeded!
-                when(client.performRequest(argThat(new RequestMatcher(is("GET"), startsWith("/_xpack/watcher/watch/")))))
-                        .thenReturn(first, otherResponses.toArray(new Response[otherResponses.size()]))
-                        .thenThrow(exception);
+                whenPerformRequestAsyncWith(client, new RequestMatcher(is("GET"), startsWith("/_watcher/watch/")),
+                                            first, otherResponses, exception);
                 whenSuccessfulPutWatches(otherResponses.size() + 1);
 
                 // +1 for the "first"
                 expectedGets += 1 + successful + unsuccessful;
                 expectedPuts = (successfulFirst ? 0 : 1) + unsuccessful;
-            // deleting watches
             } else {
+                // deleting watches
                 // - 1 from necessary failure after it!
                 final int successful = randomIntBetween(1, EXPECTED_WATCHES - 1);
 
                 // there is no form of an unsuccessful delete; only success or error
                 final List<Response> responses = successfulDeleteResponses(successful);
 
-                when(client.performRequest(argThat(new RequestMatcher(is("DELETE"), startsWith("/_xpack/watcher/watch/")))))
-                        .thenReturn(responses.get(0), responses.subList(1, successful).toArray(new Response[successful - 1]))
-                        .thenThrow(exception);
+                whenPerformRequestAsyncWith(client, new RequestMatcher(is("DELETE"), startsWith("/_watcher/watch/")),
+                                            responses.get(0), responses.subList(1, responses.size()), exception);
 
                 expectedGets += successful;
             }
         } else {
             final String method = validLicense ? "GET" : "DELETE";
 
-            when(client.performRequest(argThat(new RequestMatcher(is(method), startsWith("/_xpack/watcher/watch/")))))
-                    .thenThrow(exception);
+            whenPerformRequestAsyncWith(client, new RequestMatcher(is(method), startsWith("/_watcher/watch/")), exception);
         }
 
         assertTrue(resources.isDirty());
-        assertFalse(resources.checkAndPublish(client));
+        awaitCheckAndPublish(null);
         // ensure it didn't magically become not-dirty
         assertTrue(resources.isDirty());
 
@@ -430,7 +433,7 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
         verifyNoMoreInteractions(client);
     }
 
-    public void testWatchPublishBlocksAfterSuccessfulWatcherCheck() throws IOException {
+    public void testWatchPublishBlocksAfterSuccessfulWatcherCheck() {
         final int successfulGetTemplates = randomIntBetween(0, EXPECTED_TEMPLATES);
         final int unsuccessfulGetTemplates = EXPECTED_TEMPLATES - successfulGetTemplates;
         final int successfulGetPipelines = randomIntBetween(0, EXPECTED_PIPELINES);
@@ -462,9 +465,8 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
             whenGetWatches(successful, unsuccessful + 2);
 
             // previous publishes must have succeeded
-            when(client.performRequest(argThat(new RequestMatcher(is("PUT"), startsWith("/_xpack/watcher/watch/")))))
-                    .thenReturn(firstSuccess, otherResponses.toArray(new Response[otherResponses.size()]))
-                    .thenThrow(exception);
+            whenPerformRequestAsyncWith(client, new RequestMatcher(is("PUT"), startsWith("/_watcher/watch/")),
+                                        firstSuccess, otherResponses, exception);
 
             // GETs required for each PUT attempt (first is guaranteed "unsuccessful")
             expectedGets += successful + unsuccessful + 1;
@@ -474,12 +476,11 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
             // fail the check so that it has to attempt the PUT
             whenGetWatches(0, 1);
 
-            when(client.performRequest(argThat(new RequestMatcher(is("PUT"), startsWith("/_xpack/watcher/watch/")))))
-                    .thenThrow(exception);
+            whenPerformRequestAsyncWith(client, new RequestMatcher(is("PUT"), startsWith("/_watcher/watch/")), exception);
         }
 
         assertTrue(resources.isDirty());
-        assertFalse(resources.checkAndPublish(client));
+        awaitCheckAndPublish(null);
         // ensure it didn't magically become not-dirty
         assertTrue(resources.isDirty());
 
@@ -494,7 +495,57 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
         verifyNoMoreInteractions(client);
     }
 
-    public void testSuccessfulChecksOnElectedMasterNode() throws IOException {
+    public void testDeployClusterAlerts() {
+        final int successfulGetTemplates = randomIntBetween(0, EXPECTED_TEMPLATES);
+        final int unsuccessfulGetTemplates = EXPECTED_TEMPLATES - successfulGetTemplates;
+        final int successfulGetPipelines = randomIntBetween(0, EXPECTED_PIPELINES);
+        final int unsuccessfulGetPipelines = EXPECTED_PIPELINES - successfulGetPipelines;
+        final Exception exception = failurePutException();
+
+        whenValidVersionResponse();
+        whenGetTemplates(successfulGetTemplates, unsuccessfulGetTemplates);
+        whenSuccessfulPutTemplates(unsuccessfulGetTemplates);
+        whenGetPipelines(successfulGetPipelines, unsuccessfulGetPipelines);
+        whenSuccessfulPutPipelines(unsuccessfulGetPipelines);
+        // license needs to be valid, otherwise we'll do DELETEs, which are tested earlier
+        whenWatcherCanBeUsed(true);
+
+        // a number of watches are mocked as present
+        final int existingWatches = randomIntBetween(0, EXPECTED_WATCHES);
+
+        // For completeness's sake. GET/PUT watches wont be called by the resources.
+        // Instead it tries to DELETE the watches ignoring them not existing.
+        whenGetWatches(existingWatches, EXPECTED_WATCHES - existingWatches);
+        whenPerformRequestAsyncWith(client, new RequestMatcher(is("PUT"), startsWith("/_watcher/watch/")), exception);
+        whenPerformRequestAsyncWith(client, new RequestMatcher(is("DELETE"), startsWith("/_watcher/watch/")),
+            successfulDeleteResponses(EXPECTED_WATCHES));
+
+        // Create resources that are configured to remove all watches
+        Settings removalExporterSettings = Settings.builder()
+            .put(exporterSettings)
+            .put("xpack.monitoring.migration.decommission_alerts", true)
+            .build();
+        MultiHttpResource overrideResource = HttpExporter.createResources(
+            new Exporter.Config("_http", "http", removalExporterSettings, clusterService, licenseState)).allResources;
+
+        assertTrue(overrideResource.isDirty());
+        awaitCheckAndPublish(overrideResource, true);
+        // Should proceed
+        assertFalse(overrideResource.isDirty());
+
+        verifyVersionCheck();
+        verifyGetTemplates(EXPECTED_TEMPLATES);
+        verifyPutTemplates(unsuccessfulGetTemplates);
+        verifyGetPipelines(EXPECTED_PIPELINES);
+        verifyPutPipelines(unsuccessfulGetPipelines);
+        verifyWatcherCheck();
+        verifyGetWatches(0);
+        verifyPutWatches(0);
+        verifyDeleteWatches(EXPECTED_WATCHES);
+        verifyNoMoreInteractions(client);
+    }
+
+    public void testSuccessfulChecksOnElectedMasterNode() {
         final int successfulGetTemplates = randomIntBetween(0, EXPECTED_TEMPLATES);
         final int unsuccessfulGetTemplates = EXPECTED_TEMPLATES - successfulGetTemplates;
         final int successfulGetPipelines = randomIntBetween(0, EXPECTED_PIPELINES);
@@ -522,7 +573,7 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
         assertTrue(resources.isDirty());
 
         // it should be able to proceed!
-        assertTrue(resources.checkAndPublish(client));
+        awaitCheckAndPublish(true);
         assertFalse(resources.isDirty());
 
         verifyVersionCheck();
@@ -545,13 +596,13 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
     /**
      * If the node is not the elected master node, then it should never check Watcher or send Watches (Cluster Alerts).
      */
-    public void testSuccessfulChecksIfNotElectedMasterNode() throws IOException {
+    public void testSuccessfulChecksIfNotElectedMasterNode() {
         final ClusterState state = mockClusterState(false);
         final ClusterService clusterService = mockClusterService(state);
 
         final MultiHttpResource resources =
                 HttpExporter.createResources(
-                        new Exporter.Config("_http", "http", exporterSettings, clusterService, licenseState));
+                        new Exporter.Config("_http", "http", exporterSettings, clusterService, licenseState)).allResources;
 
         final int successfulGetTemplates = randomIntBetween(0, EXPECTED_TEMPLATES);
         final int unsuccessfulGetTemplates = EXPECTED_TEMPLATES - successfulGetTemplates;
@@ -566,8 +617,10 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
 
         assertTrue(resources.isDirty());
 
-        // it should be able to proceed!
-        assertTrue(resources.checkAndPublish(client));
+        // it should be able to proceed! (note: we are not using the instance "resources" here)
+        resources.checkAndPublish(client, wrapMockListener(publishListener));
+
+        verifyPublishListener(ResourcePublishResult.ready());
         assertFalse(resources.isDirty());
 
         verifyVersionCheck();
@@ -601,29 +654,29 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
     }
 
     private Response successfulGetWatchResponse(final String watchId) {
-        final HttpEntity goodEntity = entityForClusterAlert(EXISTS, ClusterAlertsUtil.LAST_UPDATED_VERSION);
+        final HttpEntity goodEntity = entityForClusterAlert(true, ClusterAlertsUtil.LAST_UPDATED_VERSION);
 
-        return response("GET", "/_xpack/watcher/watch/" + watchId, successfulCheckStatus(), goodEntity);
+        return response("GET", "/_watcher/watch/" + watchId, successfulCheckStatus(), goodEntity);
     }
     private Response unsuccessfulGetWatchResponse(final String watchId) {
         if (randomBoolean()) {
-            final HttpEntity badEntity = entityForClusterAlert(DOES_NOT_EXIST, ClusterAlertsUtil.LAST_UPDATED_VERSION);
+            final HttpEntity badEntity = entityForClusterAlert(false, ClusterAlertsUtil.LAST_UPDATED_VERSION);
 
-            return response("GET", "/_xpack/watcher/watch/" + watchId, successfulCheckStatus(), badEntity);
+            return response("GET", "/_watcher/watch/" + watchId, successfulCheckStatus(), badEntity);
         }
 
         return unsuccessfulGetResponse();
     }
 
     private Response successfulGetResourceResponse(final String resourcePath, final String resourceName) {
-        final HttpEntity goodEntity = entityForResource(EXISTS, resourceName, MonitoringTemplateUtils.LAST_UPDATED_VERSION);
+        final HttpEntity goodEntity = entityForResource(true, resourceName, MonitoringTemplateUtils.LAST_UPDATED_VERSION);
 
         return response("GET", resourcePath + resourceName, successfulCheckStatus(), goodEntity);
     }
 
     private Response unsuccessfulGetResourceResponse(final String resourcePath, final String resourceName) {
         if (randomBoolean()) {
-            final HttpEntity badEntity = entityForResource(DOES_NOT_EXIST, resourceName, MonitoringTemplateUtils.LAST_UPDATED_VERSION);
+            final HttpEntity badEntity = entityForResource(false, resourceName, MonitoringTemplateUtils.LAST_UPDATED_VERSION);
 
             return response("GET", resourcePath + resourceName, successfulCheckStatus(), badEntity);
         }
@@ -704,82 +757,55 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
         return responses;
     }
 
-    private void whenValidVersionResponse() throws IOException {
+    private void whenValidVersionResponse() {
         final HttpEntity entity = new StringEntity("{\"version\":{\"number\":\"" + Version.CURRENT + "\"}}", ContentType.APPLICATION_JSON);
 
         when(versionResponse.getEntity()).thenReturn(entity);
-        when(client.performRequest(argThat(new RequestMatcher(is("GET"), is("/")))))
-                .thenReturn(versionResponse);
+        whenPerformRequestAsyncWith(client, new RequestMatcher(is("GET"), is("/")), versionResponse);
     }
 
-    private void whenGetTemplates(final int successful, final int unsuccessful) throws IOException {
+    private void whenGetTemplates(final int successful, final int unsuccessful) {
         final List<Response> gets = getTemplateResponses(0, successful, unsuccessful);
 
-        if (gets.size() == 1) {
-            when(client.performRequest(argThat(new RequestMatcher(is("GET"), startsWith("/_template/")))))
-                    .thenReturn(gets.get(0));
-        } else {
-            when(client.performRequest(argThat(new RequestMatcher(is("GET"), startsWith("/_template/")))))
-                    .thenReturn(gets.get(0), gets.subList(1, gets.size()).toArray(new Response[gets.size() - 1]));
-        }
+        whenPerformRequestAsyncWith(client, new RequestMatcher(is("GET"), startsWith("/_template/")), gets);
     }
 
-    private void whenSuccessfulPutTemplates(final int successful) throws IOException {
+    private void whenSuccessfulPutTemplates(final int successful) {
         final List<Response> successfulPuts = successfulPutResponses(successful);
 
         // empty is possible if they all exist
-        if (successful == 1) {
-            when(client.performRequest(argThat(new RequestMatcher(is("PUT"), startsWith("/_template/")))))
-                    .thenReturn(successfulPuts.get(0));
-        } else if (successful > 1) {
-            when(client.performRequest(argThat(new RequestMatcher(is("PUT"), startsWith("/_template/")))))
-                    .thenReturn(successfulPuts.get(0), successfulPuts.subList(1, successful).toArray(new Response[successful - 1]));
-        }
+        whenPerformRequestAsyncWith(client, new RequestMatcher(is("PUT"), startsWith("/_template/")), successfulPuts);
     }
 
-    private void whenGetPipelines(final int successful, final int unsuccessful) throws IOException {
+    private void whenGetPipelines(final int successful, final int unsuccessful) {
         final List<Response> gets = getPipelineResponses(0, successful, unsuccessful);
 
-        if (gets.size() == 1) {
-            when(client.performRequest(argThat(new RequestMatcher(is("GET"), startsWith("/_ingest/pipeline/")))))
-                    .thenReturn(gets.get(0));
-        } else {
-            when(client.performRequest(argThat(new RequestMatcher(is("GET"), startsWith("/_ingest/pipeline/")))))
-                    .thenReturn(gets.get(0), gets.subList(1, gets.size()).toArray(new Response[gets.size() - 1]));
-        }
+        whenPerformRequestAsyncWith(client, new RequestMatcher(is("GET"), startsWith("/_ingest/pipeline/")), gets);
     }
 
-    private void whenSuccessfulPutPipelines(final int successful) throws IOException {
+    private void whenSuccessfulPutPipelines(final int successful) {
         final List<Response> successfulPuts = successfulPutResponses(successful);
 
         // empty is possible if they all exist
-        if (successful == 1) {
-            when(client.performRequest(argThat(new RequestMatcher(is("PUT"), startsWith("/_ingest/pipeline/")))))
-                    .thenReturn(successfulPuts.get(0));
-        } else if (successful > 1) {
-            when(client.performRequest(argThat(new RequestMatcher(is("PUT"), startsWith("/_ingest/pipeline/")))))
-                    .thenReturn(successfulPuts.get(0), successfulPuts.subList(1, successful).toArray(new Response[successful - 1]));
-        }
+        whenPerformRequestAsyncWith(client, new RequestMatcher(is("PUT"), startsWith("/_ingest/pipeline/")), successfulPuts);
     }
 
-    private void whenWatcherCanBeUsed(final boolean validLicense) throws IOException {
-        final MetaData metaData = mock(MetaData.class);
+    private void whenWatcherCanBeUsed(final boolean validLicense) {
+        final Metadata metadata = mock(Metadata.class);
 
-        when(state.metaData()).thenReturn(metaData);
-        when(metaData.clusterUUID()).thenReturn("the_clusters_uuid");
+        when(state.metadata()).thenReturn(metadata);
+        when(metadata.clusterUUID()).thenReturn("the_clusters_uuid");
 
-        when(licenseState.isMonitoringClusterAlertsAllowed()).thenReturn(validLicense);
+        when(licenseState.checkFeature(XPackLicenseState.Feature.MONITORING_CLUSTER_ALERTS)).thenReturn(validLicense);
 
         final HttpEntity entity =
                 new StringEntity("{\"features\":{\"watcher\":{\"enabled\":true,\"available\":true}}}", ContentType.APPLICATION_JSON);
         final Response successfulGet = response("GET", "_xpack", successfulCheckStatus(), entity);
 
-        // empty is possible if they all exist
-        when(client.performRequest(argThat(new RequestMatcher(is("GET"), is("/_xpack")))))
-                .thenReturn(successfulGet);
+        whenPerformRequestAsyncWith(client, new RequestMatcher(is("GET"), is("/_xpack")), successfulGet);
     }
 
-    private void whenWatcherCannotBeUsed() throws IOException {
+    private void whenWatcherCannotBeUsed() {
         final Response response;
         if (randomBoolean()) {
             final HttpEntity entity = randomFrom(
@@ -793,90 +819,71 @@ public class HttpExporterResourceTests extends AbstractPublishableHttpResourceTe
             response = response("GET", "_xpack", notFoundCheckStatus());
         }
 
-        // empty is possible if they all exist
-        when(client.performRequest(argThat(new RequestMatcher(is("GET"), is("/_xpack")))))
-                .thenReturn(response);
+        whenPerformRequestAsyncWith(client, new RequestMatcher(is("GET"), is("/_xpack")), response);
     }
 
-    private void whenGetWatches(final int successful, final int unsuccessful) throws IOException {
+    private void whenGetWatches(final int successful, final int unsuccessful) {
         final List<Response> gets = getWatcherResponses(0, successful, unsuccessful);
 
-        if (gets.size() == 1) {
-            when(client.performRequest(argThat(new RequestMatcher(is("GET"), startsWith("/_xpack/watcher/watch/")))))
-                    .thenReturn(gets.get(0));
-        } else {
-            when(client.performRequest(argThat(new RequestMatcher(is("GET"), startsWith("/_xpack/watcher/watch/")))))
-                    .thenReturn(gets.get(0), gets.subList(1, gets.size()).toArray(new Response[gets.size() - 1]));
-        }
+        whenPerformRequestAsyncWith(client, new RequestMatcher(is("GET"), startsWith("/_watcher/watch/")), gets);
     }
 
-    private void whenSuccessfulPutWatches(final int successful) throws IOException {
+    private void whenSuccessfulPutWatches(final int successful) {
         final List<Response> successfulPuts = successfulPutResponses(successful);
 
         // empty is possible if they all exist
-        if (successful == 1) {
-            when(client.performRequest(argThat(new RequestMatcher(is("PUT"), startsWith("/_xpack/watcher/watch/")))))
-                    .thenReturn(successfulPuts.get(0));
-        } else if (successful > 1) {
-            when(client.performRequest(argThat(new RequestMatcher(is("PUT"), startsWith("/_xpack/watcher/watch/")))))
-                    .thenReturn(successfulPuts.get(0), successfulPuts.subList(1, successful).toArray(new Response[successful - 1]));
-        }
+        whenPerformRequestAsyncWith(client, new RequestMatcher(is("PUT"), startsWith("/_watcher/watch/")), successfulPuts);
     }
 
-    private void whenSuccessfulDeleteWatches(final int successful) throws IOException {
+    private void whenSuccessfulDeleteWatches(final int successful) {
         final List<Response> successfulDeletes = successfulDeleteResponses(successful);
 
         // empty is possible if they all exist
-        if (successful == 1) {
-            when(client.performRequest(argThat(new RequestMatcher(is("DELETE"), startsWith("/_xpack/watcher/watch/")))))
-                    .thenReturn(successfulDeletes.get(0));
-        } else if (successful > 1) {
-            when(client.performRequest(argThat(new RequestMatcher(is("DELETE"), startsWith("/_xpack/watcher/watch/")))))
-                    .thenReturn(successfulDeletes.get(0), successfulDeletes.subList(1, successful).toArray(new Response[successful - 1]));
-        }
+        whenPerformRequestAsyncWith(client, new RequestMatcher(is("DELETE"), startsWith("/_watcher/watch/")), successfulDeletes);
     }
 
-    private void verifyVersionCheck() throws IOException {
-        verify(client).performRequest(argThat(new RequestMatcher(is("GET"), is("/"))));
+    private void verifyVersionCheck() {
+        verify(client).performRequestAsync(argThat(new RequestMatcher(is("GET"), is("/"))), any(ResponseListener.class));
     }
 
-    private void verifyGetTemplates(final int called) throws IOException {
+    private void verifyGetTemplates(final int called) {
         verify(client, times(called))
-                .performRequest(argThat(new RequestMatcher(is("GET"), startsWith("/_template/"))));
+            .performRequestAsync(argThat(new RequestMatcher(is("GET"), startsWith("/_template/"))), any(ResponseListener.class));
     }
 
-    private void verifyPutTemplates(final int called) throws IOException {
+    private void verifyPutTemplates(final int called) {
         verify(client, times(called))
-                .performRequest(argThat(new RequestMatcher(is("PUT"), startsWith("/_template/"))));
+            .performRequestAsync(argThat(new RequestMatcher(is("PUT"), startsWith("/_template/"))), any(ResponseListener.class));
     }
 
-    private void verifyGetPipelines(final int called) throws IOException {
+    private void verifyGetPipelines(final int called) {
         verify(client, times(called))
-                .performRequest(argThat(new RequestMatcher(is("GET"), startsWith("/_ingest/pipeline/"))));
+            .performRequestAsync(argThat(new RequestMatcher(is("GET"), startsWith("/_ingest/pipeline/"))), any(ResponseListener.class));
     }
 
-    private void verifyPutPipelines(final int called) throws IOException {
+    private void verifyPutPipelines(final int called) {
         verify(client, times(called))
-                .performRequest(argThat(new RequestMatcher(is("PUT"), startsWith("/_ingest/pipeline/"))));
+            .performRequestAsync(argThat(new RequestMatcher(is("PUT"), startsWith("/_ingest/pipeline/"))), any(ResponseListener.class));
     }
 
-    private void verifyWatcherCheck() throws IOException {
-        verify(client).performRequest(argThat(new RequestMatcher(is("GET"), is("/_xpack"))));
+    private void verifyWatcherCheck() {
+        verify(client).performRequestAsync(argThat(new RequestMatcher(is("GET"), is("/_xpack"))), any(ResponseListener.class));
     }
 
-    private void verifyDeleteWatches(final int called) throws IOException {
+    private void verifyDeleteWatches(final int called) {
         verify(client, times(called))
-                .performRequest(argThat(new RequestMatcher(is("DELETE"), startsWith("/_xpack/watcher/watch/"))));
+            .performRequestAsync(argThat(new RequestMatcher(is("DELETE"), startsWith("/_watcher/watch/"))),
+                                 any(ResponseListener.class));
     }
 
-    private void verifyGetWatches(final int called) throws IOException {
+    private void verifyGetWatches(final int called) {
         verify(client, times(called))
-                .performRequest(argThat(new RequestMatcher(is("GET"), startsWith("/_xpack/watcher/watch/"))));
+            .performRequestAsync(argThat(new RequestMatcher(is("GET"), startsWith("/_watcher/watch/"))), any(ResponseListener.class));
     }
 
-    private void verifyPutWatches(final int called) throws IOException {
+    private void verifyPutWatches(final int called) {
         verify(client, times(called))
-                .performRequest(argThat(new RequestMatcher(is("PUT"), startsWith("/_xpack/watcher/watch/"))));
+            .performRequestAsync(argThat(new RequestMatcher(is("PUT"), startsWith("/_watcher/watch/"))), any(ResponseListener.class));
     }
 
     private ClusterService mockClusterService(final ClusterState state) {

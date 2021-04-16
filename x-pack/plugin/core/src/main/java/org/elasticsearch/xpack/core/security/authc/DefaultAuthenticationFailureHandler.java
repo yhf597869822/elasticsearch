@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.core.security.authc;
 
@@ -14,6 +15,7 @@ import org.elasticsearch.xpack.core.XPackField;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -26,17 +28,7 @@ import static org.elasticsearch.xpack.core.security.support.Exceptions.authentic
  * response headers like 'WWW-Authenticate'
  */
 public class DefaultAuthenticationFailureHandler implements AuthenticationFailureHandler {
-    private final Map<String, List<String>> defaultFailureResponseHeaders;
-
-    /**
-     * Constructs default authentication failure handler
-     *
-     * @deprecated replaced by {@link #DefaultAuthenticationFailureHandler(Map)}
-     */
-    @Deprecated
-    public DefaultAuthenticationFailureHandler() {
-        this(null);
-    }
+    private volatile Map<String, List<String>> defaultFailureResponseHeaders;
 
     /**
      * Constructs default authentication failure handler with provided default
@@ -55,13 +47,22 @@ public class DefaultAuthenticationFailureHandler implements AuthenticationFailur
                     .toMap(entry -> entry.getKey(), entry -> {
                         if (entry.getKey().equalsIgnoreCase("WWW-Authenticate")) {
                             List<String> values = new ArrayList<>(entry.getValue());
-                            Collections.sort(values, (o1, o2) -> authSchemePriority(o1).compareTo(authSchemePriority(o2)));
+                            values.sort(Comparator.comparing(DefaultAuthenticationFailureHandler::authSchemePriority));
                             return Collections.unmodifiableList(values);
                         } else {
                             return Collections.unmodifiableList(entry.getValue());
                         }
                     })));
         }
+    }
+
+    /**
+     * This method is called when failureResponseHeaders need to be set (at startup) or updated (if license state changes)
+     *
+     * @param failureResponseHeaders the Map of failure response headers to be set
+     */
+    public void setHeaders(Map<String, List<String>> failureResponseHeaders){
+        defaultFailureResponseHeaders = failureResponseHeaders;
     }
 
     /**
@@ -77,10 +78,12 @@ public class DefaultAuthenticationFailureHandler implements AuthenticationFailur
             return 0;
         } else if (headerValue.regionMatches(true, 0, "bearer", 0, "bearer".length())) {
             return 1;
-        } else if (headerValue.regionMatches(true, 0, "basic", 0, "basic".length())) {
+        } else if (headerValue.regionMatches(true, 0, "apikey", 0, "apikey".length())) {
             return 2;
-        } else {
+        } else if (headerValue.regionMatches(true, 0, "basic", 0, "basic".length())) {
             return 3;
+        } else {
+            return 4;
         }
     }
 
@@ -108,12 +111,12 @@ public class DefaultAuthenticationFailureHandler implements AuthenticationFailur
 
     @Override
     public ElasticsearchSecurityException missingToken(RestRequest request, ThreadContext context) {
-        return createAuthenticationError("missing authentication token for REST request [{}]", null, request.uri());
+        return createAuthenticationError("missing authentication credentials for REST request [{}]", null, request.uri());
     }
 
     @Override
     public ElasticsearchSecurityException missingToken(TransportMessage message, String action, ThreadContext context) {
-        return createAuthenticationError("missing authentication token for action [{}]", null, action);
+        return createAuthenticationError("missing authentication credentials for action [{}]", null, action);
     }
 
     @Override

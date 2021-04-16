@@ -7,7 +7,6 @@ setup:
   - do:
       index:
         index:   source
-        type:    foo
         id:      1
         body:    { "text": "test" }
   - do:
@@ -24,6 +23,7 @@ setup:
 
   - do:
       search:
+        rest_total_hits_as_int: true
         index: source
         body:
           query:
@@ -37,7 +37,6 @@ setup:
   - do:
       index:
         index:   source
-        type:    foo
         id:      1
         body:    { "text": "test" }
   - do:
@@ -55,6 +54,7 @@ setup:
 
   - do:
       search:
+        rest_total_hits_as_int: true
         index: source
         body:
           query:
@@ -68,7 +68,6 @@ setup:
   - do:
       index:
         index:   source
-        type:    foo
         id:      1
         body:    { "text": "test" }
   - do:
@@ -86,6 +85,7 @@ setup:
 
   - do:
       search:
+        rest_total_hits_as_int: true
         index: source
         body:
           query:
@@ -99,7 +99,6 @@ setup:
   - do:
       index:
         index:   source
-        type:    foo
         id:      1
         body:    { "text": "test" }
   - do:
@@ -117,7 +116,6 @@ setup:
   - do:
       index:
         index:   source
-        type:    foo
         id:      1
         body:    { "text": "test" }
   - do:
@@ -135,13 +133,11 @@ setup:
   - do:
       index:
         index:   source
-        type:    foo
         id:      1
         body:    { "text": "test" }
   - do:
       index:
         index:   source
-        type:    foo
         id:      2
         body:    { "text": "test", "hidden": true }
   - do:
@@ -160,6 +156,7 @@ setup:
   # We only updated one doc, presumably the one without the hidden field
   - do:
       search:
+        rest_total_hits_as_int: true
         index: source
         body:
           query:
@@ -170,6 +167,7 @@ setup:
   # We didn't update the doc with the hidden field
   - do:
       search:
+        rest_total_hits_as_int: true
         index: source
         body:
           query:
@@ -187,7 +185,6 @@ setup:
   - do:
       index:
         index:   source
-        type:    foo
         id:      1
         body:    { "text": "test", "foo": "z", "bar": "z" }
   - do:
@@ -205,7 +202,6 @@ setup:
   - do:
       get:
         index: source
-        type: foo
         id: 1
   # These were visible to the user running the update_by_query so they stayed.
   - match: { _source.foo: z }

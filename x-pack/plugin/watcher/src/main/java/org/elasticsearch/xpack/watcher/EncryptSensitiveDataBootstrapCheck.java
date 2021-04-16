@@ -1,13 +1,13 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.watcher;
 
 import org.elasticsearch.bootstrap.BootstrapCheck;
 import org.elasticsearch.bootstrap.BootstrapContext;
-import org.elasticsearch.env.Environment;
 import org.elasticsearch.xpack.core.XPackPlugin;
 import org.elasticsearch.xpack.core.watcher.WatcherField;
 
@@ -16,17 +16,11 @@ import java.nio.file.Path;
 
 final class EncryptSensitiveDataBootstrapCheck implements BootstrapCheck {
 
-    private final Environment environment;
-
-    EncryptSensitiveDataBootstrapCheck(Environment environment) {
-        this.environment = environment;
-    }
-
     @Override
     public BootstrapCheckResult check(BootstrapContext context) {
-        if (Watcher.ENCRYPT_SENSITIVE_DATA_SETTING.get(context.settings)
-                && WatcherField.ENCRYPTION_KEY_SETTING.exists(context.settings) == false) {
-            final Path systemKeyPath = XPackPlugin.resolveConfigFile(environment, "system_key").toAbsolutePath();
+        if (Watcher.ENCRYPT_SENSITIVE_DATA_SETTING.get(context.settings())
+                && WatcherField.ENCRYPTION_KEY_SETTING.exists(context.settings()) == false) {
+            final Path systemKeyPath = XPackPlugin.resolveConfigFile(context.environment(), "system_key").toAbsolutePath();
             final String message;
             if (Files.exists(systemKeyPath)) {
                 message = "Encryption of sensitive data requires the key to be placed in the secure setting store. Run " +

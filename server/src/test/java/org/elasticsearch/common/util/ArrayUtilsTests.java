@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.common.util;
@@ -30,15 +19,15 @@ import static org.hamcrest.Matchers.is;
 public class ArrayUtilsTests extends ESTestCase {
     public void testBinarySearch() throws Exception {
         for (int j = 0; j < 100; j++) {
-            int index = Math.min(randomInt(0, 10), 9);
-            double tolerance = Math.random() * 0.01;
-            double lookForValue = randomFreq(0.9) ? -1 : Double.NaN; // sometimes we'll look for NaN
+            int index = randomIntBetween(0, 9);
+            double tolerance = randomDoubleBetween(0, 0.01, true);
+            double lookForValue = frequently() ? -1 : Double.NaN; // sometimes we'll look for NaN
             double[] array = new double[10];
             for (int i = 0; i < array.length; i++) {
                 double value;
-                if (randomFreq(0.9)) {
-                    value = Math.random() * 10;
-                    array[i] = value + ((randomFreq(0.5) ? 1 : -1) * Math.random() * tolerance);
+                if (frequently()) {
+                    value = randomDoubleBetween(0, 9, true);
+                    array[i] = value + ((randomBoolean() ? 1 : -1) * randomDouble() * tolerance);
 
                 } else {                    // sometimes we'll have NaN in the array
                     value = Double.NaN;
@@ -71,15 +60,6 @@ public class ArrayUtilsTests extends ESTestCase {
                 assertThat(bitSet.get(foundIndex), is(true));
             }
         }
-    }
-
-    private boolean randomFreq(double freq) {
-        return Math.random() < freq;
-    }
-
-    private int randomInt(int min, int max) {
-        int delta = (int) (Math.random() * (max - min));
-        return min + delta;
     }
 
     public void testConcat() {

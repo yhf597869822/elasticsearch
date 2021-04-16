@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.watcher.transform.search;
 
@@ -21,6 +22,8 @@ import org.elasticsearch.xpack.core.watcher.transform.ExecutableTransform;
 import org.elasticsearch.xpack.core.watcher.watch.Payload;
 import org.elasticsearch.xpack.watcher.support.search.WatcherSearchTemplateRequest;
 import org.elasticsearch.xpack.watcher.support.search.WatcherSearchTemplateService;
+
+import java.util.Collections;
 
 import static org.elasticsearch.xpack.watcher.transform.search.SearchTransform.TYPE;
 
@@ -51,7 +54,13 @@ public class ExecutableSearchTransform extends ExecutableTransform<SearchTransfo
             SearchRequest searchRequest = searchTemplateService.toSearchRequest(request);
             SearchResponse resp = ClientHelper.executeWithHeaders(ctx.watch().status().getHeaders(), ClientHelper.WATCHER_ORIGIN, client,
                     () -> client.search(searchRequest).actionGet(timeout));
-            return new SearchTransform.Result(request, new Payload.XContent(resp));
+            final Params params;
+            if (request.isRestTotalHitsAsint()) {
+                params = new MapParams(Collections.singletonMap("rest_total_hits_as_int", "true"));
+            } else {
+                params = EMPTY_PARAMS;
+            }
+            return new SearchTransform.Result(request, new Payload.XContent(resp, params));
         } catch (Exception e) {
             logger.error((Supplier<?>) () -> new ParameterizedMessage("failed to execute [{}] transform for [{}]", TYPE, ctx.id()), e);
             return new SearchTransform.Result(request, e);

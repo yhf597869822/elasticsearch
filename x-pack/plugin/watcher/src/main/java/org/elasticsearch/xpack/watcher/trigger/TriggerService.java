@@ -1,13 +1,13 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.watcher.trigger;
 
 import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.common.Strings;
-import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.xpack.core.watcher.common.stats.Counters;
 import org.elasticsearch.xpack.core.watcher.trigger.Trigger;
@@ -20,17 +20,18 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
 import static java.util.Collections.unmodifiableMap;
 import static org.elasticsearch.xpack.core.watcher.support.Exceptions.illegalArgument;
 
-public class TriggerService extends AbstractComponent {
+public class TriggerService {
 
     private final GroupedConsumer consumer = new GroupedConsumer();
     private final Map<String, TriggerEngine> engines;
-    private final Map<String, TriggerWatchStats> perWatchStats = new HashMap<>();
+    private final Map<String, TriggerWatchStats> perWatchStats = new ConcurrentHashMap<>();
 
     public TriggerService(Set<TriggerEngine> engines) {
         Map<String, TriggerEngine> builder = new HashMap<>();

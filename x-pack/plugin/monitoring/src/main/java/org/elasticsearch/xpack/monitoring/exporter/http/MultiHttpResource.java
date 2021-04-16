@@ -1,12 +1,15 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.monitoring.exporter.http;
 
+import java.util.Iterator;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.client.RestClient;
 
 import java.util.Collections;
@@ -17,7 +20,7 @@ import java.util.List;
  * <p>
  * By telling the {@code MultiHttpResource} to become dirty, it effectively marks all of its sub-resources dirty as well.
  * <p>
- * Sub-resources should be the sole responsibility of the the {@code MultiHttpResource}; there should not be something using them directly
+ * Sub-resources should be the sole responsibility of the {@code MultiHttpResource}; there should not be something using them directly
  * if they are included in a {@code MultiHttpResource}.
  */
 public class MultiHttpResource extends HttpResource {
@@ -38,6 +41,10 @@ public class MultiHttpResource extends HttpResource {
     public MultiHttpResource(final String resourceOwnerName, final List<? extends HttpResource> resources) {
         super(resourceOwnerName);
 
+        if (resources.isEmpty()) {
+            throw new IllegalArgumentException("[resources] cannot be empty");
+        }
+
         this.resources = Collections.unmodifiableList(resources);
     }
 
@@ -54,22 +61,33 @@ public class MultiHttpResource extends HttpResource {
      * Check and publish all {@linkplain #resources sub-resources}.
      */
     @Override
-    protected boolean doCheckAndPublish(RestClient client) {
+    protected void doCheckAndPublish(final RestClient client, final ActionListener<ResourcePublishResult> listener) {
         logger.trace("checking sub-resources existence and publishing on the [{}]", resourceOwnerName);
 
-        boolean exists = true;
+        final Iterator<HttpResource> iterator = resources.iterator();
 
         // short-circuits on the first failure, thus marking the whole thing dirty
-        for (final HttpResource resource : resources) {
-            if (resource.checkAndPublish(client) == false) {
-                exists = false;
-                break;
+        iterator.next().checkAndPublish(client, new ActionListener<>() {
+
+            @Override
+            public void onResponse(final ResourcePublishResult publishResult) {
+                // short-circuit on the first failure
+                if (publishResult.isSuccess() && iterator.hasNext()) {
+                    iterator.next().checkAndPublish(client, this);
+                } else {
+                    logger.trace("all sub-resources exist [{}] on the [{}]", publishResult.isSuccess(), resourceOwnerName);
+                    listener.onResponse(publishResult);
+                }
             }
-        }
 
-        logger.trace("all sub-resources exist [{}] on the [{}]", exists, resourceOwnerName);
+            @Override
+            public void onFailure(final Exception e) {
+                logger.trace("all sub-resources exist [false] on the [{}]", resourceOwnerName);
 
-        return exists;
+                listener.onFailure(e);
+            }
+
+        });
     }
 
 }
